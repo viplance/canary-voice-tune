@@ -27,5 +27,5 @@ private:
     std::vector<float> delayBuffer;
     int writePos = 0;
     float phase = 0.0f;
-    int windowSize = 2048; 
+    int windowSize = 2048;
 };

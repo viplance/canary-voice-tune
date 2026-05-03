@@ -21,20 +21,21 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     smoothedRatio = 1.0f;
     targetRatio = 1.0f;
     alpha = 1.0f;
+    smoothedPeriod = (float)windowSize;
 }
 
 void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
 {
     currentRatio = ratio;
-    
+
     float target = isVoiced ? currentRatio : 1.0f;
     float timeMs = isVoiced ? attackMs : releaseMs;
     if (timeMs < 1.0f) timeMs = 1.0f; // min 1ms
-    
+
     // lowpass alpha
     float timeS = timeMs / 1000.0f;
     alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
-    
+
     targetRatio = target;
 
     // Pitch synchronous period matching
@@ -43,9 +44,9 @@ void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, 
     if (isVoiced && detectedHz > 40.0f) {
         targetPeriod = currentSampleRate / detectedHz;
     }
-    
+
     // Update target period, but we'll smooth it per-sample in process() to avoid clicks
-    // We reuse windowSize variable as the "targetPeriod" 
+    // We reuse windowSize variable as the "targetPeriod"
     windowSize = (int)targetPeriod;
 }
 
@@ -60,15 +61,15 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
     {
         // Smooth ratio
         smoothedRatio += alpha * (targetRatio - smoothedRatio);
-        
+
         // Smooth period (200ms time constant to avoid sudden delay jumps)
         float periodAlpha = 1.0f - std::exp(-1.0f / (0.2f * currentSampleRate));
         smoothedPeriod += periodAlpha * ((float)windowSize - smoothedPeriod);
-        
+
         // Write to buffer
         float inSample = channelData[i];
         delayBuffer[writePos] = inSample;
-        
+
         // Window size is exactly 2.0 * period. Spacing is 1.0 * period.
         // This completely eliminates comb-filtering (choir effect) on vocals.
         float currentWindowSize = 2.0f * smoothedPeriod;

@@ -44,8 +44,14 @@ private:
 
   std::atomic<float> *attackParam = nullptr;
   std::atomic<float> *releaseParam = nullptr;
-  std::atomic<float> *accuracyParam = nullptr;
+  std::atomic<float> *rangeParam = nullptr;
+  std::atomic<float> *vibratoParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
+  int lastBestMidi = -1;
+  bool wasVoiced = false;
+  float smoothedMidi = -1.0f;
+  float smoothedTargetMidi = -1.0f;
+  int voicedSampleCount = 0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
       CanaryVoiceTuneAudioProcessor)

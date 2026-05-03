@@ -1,9 +1,8 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 
-CanaryVoiceTuneAudioProcessorEditor::
-    CanaryVoiceTuneAudioProcessorEditor(
-        CanaryVoiceTuneAudioProcessor &p)
+CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
+    CanaryVoiceTuneAudioProcessor &p)
     : AudioProcessorEditor(&p), audioProcessor(p), pianoKeyboard(p.apvts) {
   attackAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -11,25 +10,29 @@ CanaryVoiceTuneAudioProcessorEditor::
   releaseAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
           audioProcessor.apvts, "RELEASE", releaseKnob);
-  accuracyAttachment =
+  rangeAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-          audioProcessor.apvts, "ACCURACY", accuracyKnob);
+          audioProcessor.apvts, "RANGE", rangeKnob);
+  vibratoAttachment =
+      std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+          audioProcessor.apvts, "VIBRATO", vibratoKnob);
 
   attackKnob.setTextValueSuffix(" ms");
   releaseKnob.setTextValueSuffix(" ms");
-  accuracyKnob.setTextValueSuffix(" %");
+  rangeKnob.setTextValueSuffix(" %");
+  vibratoKnob.setTextValueSuffix(" %");
 
   addAndMakeVisible(attackKnob);
   addAndMakeVisible(releaseKnob);
-  addAndMakeVisible(accuracyKnob);
+  addAndMakeVisible(rangeKnob);
+  addAndMakeVisible(vibratoKnob);
   addAndMakeVisible(pianoKeyboard);
 
-  setSize(800, 400);
+  setSize(1024, 400);
   startTimerHz(30); // 30 FPS for visual updates
 }
 
-CanaryVoiceTuneAudioProcessorEditor::
-    ~CanaryVoiceTuneAudioProcessorEditor() {}
+CanaryVoiceTuneAudioProcessorEditor::~CanaryVoiceTuneAudioProcessorEditor() {}
 
 void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
   g.fillAll(juce::Colour::fromRGB(255, 239, 0)); // Yellow background
@@ -43,16 +46,18 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
   // Labels sit right above each knob
   g.setFont(13.0f);
   g.setColour(juce::Colour::fromRGB(150, 150, 160));
-  
-  auto getLabelBounds = [](juce::Component& comp) {
-      return comp.getBounds().withY(comp.getY() - 22).withHeight(22);
+
+  auto getLabelBounds = [](juce::Component &comp) {
+    return comp.getBounds().withY(comp.getY() - 22).withHeight(22);
   };
 
-  g.drawText("Attack",   getLabelBounds(attackKnob),
+  g.drawText("Attack", getLabelBounds(attackKnob),
              juce::Justification::centredBottom, false);
-  g.drawText("Release",  getLabelBounds(releaseKnob),
+  g.drawText("Release", getLabelBounds(releaseKnob),
              juce::Justification::centredBottom, false);
-  g.drawText("Accuracy", getLabelBounds(accuracyKnob),
+  g.drawText("Range", getLabelBounds(rangeKnob),
+             juce::Justification::centredBottom, false);
+  g.drawText("Remove Vibrato", getLabelBounds(vibratoKnob),
              juce::Justification::centredBottom, false);
 }
 
@@ -60,7 +65,8 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
   auto area = getLocalBounds();
   area.removeFromTop(40); // Title header
 
-  // -- Knob strip just below title: label row (22px) + knob row (88px) = 110px --
+  // -- Knob strip just below title: label row (22px) + knob row (88px) = 110px
+  // --
   auto knobStrip = area.removeFromTop(110);
 
   // Piano keyboard fills all remaining space at the bottom
@@ -69,13 +75,15 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
   // Labels are drawn in paint() at knob.getBounds().translated(0, -22)
   auto labelRow = knobStrip.removeFromTop(22); // reserved for painted labels
   (void)labelRow;
-  int knobWidth = knobStrip.getWidth() / 3;
+  int knobWidth = knobStrip.getWidth() / 4;
 
   attackKnob.setBounds(
       knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
   releaseKnob.setBounds(
       knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
-  accuracyKnob.setBounds(
+  rangeKnob.setBounds(
+      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+  vibratoKnob.setBounds(
       knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
 }
 
