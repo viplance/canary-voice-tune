@@ -28,7 +28,7 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   addAndMakeVisible(vibratoKnob);
   addAndMakeVisible(pianoKeyboard);
 
-  setSize(1024, 400);
+  setSize(1280, 400);
   startTimerHz(30); // 30 FPS for visual updates
 }
 
@@ -37,7 +37,7 @@ CanaryVoiceTuneAudioProcessorEditor::~CanaryVoiceTuneAudioProcessorEditor() {}
 void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
   g.fillAll(juce::Colour::fromRGB(255, 239, 0)); // Yellow background
 
-  g.setColour(juce::Colours::white);
+  g.setColour(juce::Colours::black);
   g.setFont(20.0f);
   g.drawFittedText(juce::String("CanaryVoiceTune v") + PLUGIN_VERSION,
                    getLocalBounds().removeFromTop(40),
@@ -45,10 +45,10 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
 
   // Labels sit right above each knob
   g.setFont(13.0f);
-  g.setColour(juce::Colour::fromRGB(150, 150, 160));
+  g.setColour(juce::Colours::black);
 
   auto getLabelBounds = [](juce::Component &comp) {
-    return comp.getBounds().withY(comp.getY() - 22).withHeight(22);
+    return comp.getBounds().withY(comp.getY() - 22).withHeight(22).expanded(20, 0);
   };
 
   g.drawText("Attack", getLabelBounds(attackKnob),

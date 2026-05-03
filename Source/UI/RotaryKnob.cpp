@@ -46,6 +46,7 @@ RotaryKnob::RotaryKnob()
     setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 20);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::Slider::textBoxTextColourId, juce::Colours::black);
 }
 
 RotaryKnob::~RotaryKnob()

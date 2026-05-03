@@ -56,7 +56,27 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
     int numSamples = buffer.getNumSamples();
     int bufSize = (int)delayBuffer.size();
     if (bufSize == 0) return;
-    
+
+    // 4-point Catmull-Rom interpolation. Linear interpolation rolls off high
+    // frequencies whenever the fractional position is near 0.5 — audible as a
+    // dull/muffled output. Cubic preserves treble.
+    auto cubicInterp = [&](float pos) {
+        int i1 = (int)pos;
+        float frac = pos - (float)i1;
+        int i0 = (i1 - 1 + bufSize) % bufSize;
+        int i2 = (i1 + 1) % bufSize;
+        int i3 = (i1 + 2) % bufSize;
+        float y0 = delayBuffer[i0];
+        float y1 = delayBuffer[i1];
+        float y2 = delayBuffer[i2];
+        float y3 = delayBuffer[i3];
+        float a = -0.5f * y0 + 1.5f * y1 - 1.5f * y2 + 0.5f * y3;
+        float b = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+        float c = -0.5f * y0 + 0.5f * y2;
+        float d = y1;
+        return ((a * frac + b) * frac + c) * frac + d;
+    };
+
     for (int i = 0; i < numSamples; ++i)
     {
         // Smooth ratio
@@ -78,46 +98,45 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
         phase += (1.0f - smoothedRatio) / currentWindowSize;
         if (phase >= 1.0f) phase -= 1.0f;
         if (phase < 0.0f) phase += 1.0f;
-        
+
         float phase2 = phase + 0.5f;
         if (phase2 >= 1.0f) phase2 -= 1.0f;
-        
-        // Positions in delay line
+
         float readPos1 = (float)writePos - (phase * currentWindowSize);
         if (readPos1 < 0) readPos1 += (float)bufSize;
-        
         float readPos2 = (float)writePos - (phase2 * currentWindowSize);
         if (readPos2 < 0) readPos2 += (float)bufSize;
-        
-        // Interpolate
-        int idx1 = (int)readPos1;
-        float frac1 = readPos1 - (float)idx1;
-        float val1 = delayBuffer[idx1] * (1.0f - frac1) + delayBuffer[(idx1 + 1) % bufSize] * frac1;
-        
-        int idx2 = (int)readPos2;
-        float frac2 = readPos2 - (float)idx2;
-        float val2 = delayBuffer[idx2] * (1.0f - frac2) + delayBuffer[(idx2 + 1) % bufSize] * frac2;
-        
-        // Windows (hanning-like crossfade)
-        // A simple triangle or shifted cosine works well
+
+        float val1 = cubicInterp(readPos1);
+        float val2 = cubicInterp(readPos2);
         float win1 = std::sin(phase * juce::MathConstants<float>::pi);
         float win2 = std::sin(phase2 * juce::MathConstants<float>::pi);
-        
-        // Normalize
         float norm = win1 + win2;
-        if (norm > 0.0001f) {
-            win1 /= norm;
-            win2 /= norm;
-        }
-        
-        float outSample = val1 * win1 + val2 * win2;
+        if (norm > 0.0001f) { win1 /= norm; win2 /= norm; }
+        float psolaSample = val1 * win1 + val2 * win2;
+
+        // Two cross-faded read pointers half a period apart inevitably produce
+        // a subtle chorus on transients (consonants, sibilants), regardless of
+        // window/normalization choice — it is fundamental to two-pointer PSOLA.
+        // To minimize the artifact, crossfade with the dry (delayed) signal
+        // proportionally to how little shift is actually needed. At ratio=1
+        // we hear pure dry; the further the ratio is from 1 the more PSOLA we
+        // mix in. Listeners can't tell the chorus apart from real shifting
+        // when the shift itself dominates.
+        float drySample = delayBuffer[writePos];
+        float shiftAmount = std::abs(smoothedRatio - 1.0f);
+        // Full PSOLA at >=1 semitone shift (ratio ~1.06 / 0.94), full dry at
+        // ratio=1, smooth crossfade between.
+        float wetMix = juce::jlimit(0.0f, 1.0f, shiftAmount / 0.06f);
+        float outSample = drySample * (1.0f - wetMix) + psolaSample * wetMix;
+
         channelData[i] = outSample;
-        
+
         // If stereo, copy to right
         if (buffer.getNumChannels() > 1) {
             buffer.getWritePointer(1)[i] = outSample;
         }
-        
+
         writePos++;
         if (writePos >= bufSize) writePos = 0;
     }
