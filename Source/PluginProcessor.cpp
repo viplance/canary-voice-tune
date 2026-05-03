@@ -34,15 +34,15 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 100.0f, 80.0f));
+      juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 150.0f, 100.0f));
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 1000.0f, 170.0f));
+      juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 500.0f, 250.0f));
   // Range: 0% = no correction (bypass), 100% = full snap to nearest note
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"RANGE", 1}, "Range", 0.0f, 100.0f, 50.0f));
+      juce::ParameterID{"RANGE", 1}, "Range", 0.0f, 100.0f, 0.0f));
   // Remove Vibrato: 0% = keep natural pitch wobble, 100% = perfectly flat note
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"VIBRATO", 1}, "Remove Vibrato", 0.0f, 100.0f, 50.0f));
+      juce::ParameterID{"VIBRATO", 1}, "Remove Vibrato", 0.0f, 100.0f, 0.0f));
   // Sibilants: high-shelf gain around 7 kHz for "s/sh/t" presence.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
