@@ -125,39 +125,30 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
 }
 
 void CanaryVoiceTuneAudioProcessorEditor::timerCallback() {
-  // Drain the audio thread's note-change ring. We highlight the LATEST note
-  // (so the keyboard always reflects what's playing right now), but by
-  // walking the ring we make sure that even if multiple distinct notes were
-  // pushed between two ticks, the UI saw them all (matters in case anything
-  // downstream cares — repaint is cheap and idempotent).
-  int writeIdx = audioProcessor.noteHistoryWriteIdx.load(std::memory_order_acquire);
-  int latestNote = -2; // sentinel
-  while (audioProcessor.noteHistoryReadIdx != writeIdx) {
-    latestNote = audioProcessor.noteHistory[audioProcessor.noteHistoryReadIdx]
-                     .load(std::memory_order_acquire);
-    audioProcessor.noteHistoryReadIdx =
-        (audioProcessor.noteHistoryReadIdx + 1) %
-        CanaryVoiceTuneAudioProcessor::kNoteHistorySize;
-  }
-  if (latestNote != -2) {
-    // -1 means "no voiced note now" — pass 0 Hz so the keyboard clears.
-    // NB: cast to float, otherwise the (latestNote + 21 - 69) / 12 division
-    // is integer and rounds to whole octaves — every note within an octave
-    // would otherwise be reported as the same A.
-    float hz = (latestNote >= 0)
-                   ? 440.0f * std::pow(2.0f, (float)((latestNote + 21) - 69) / 12.0f)
-                   : 0.0f;
-    if (pianoKeyboard.updateDetectedPitch(hz)) {
-      pianoKeyboard.repaint();
-    }
-  }
+  updateKeyboardFromAudioRing();
+  updatePopLamp();
+}
 
-  // Pop Filter lamp: smoothly interpolate UI intensity toward the actual
-  // ducking activity. The DSP-side popActivity already follows an asymmetric
-  // attack/release on gain reduction, so we just need a light extra smoothing
-  // to make the lamp glow rather than flicker between frames.
-  float target = audioProcessor.getPopActivity();
-  // Fast rise (visible immediately when a pop hits), slower fall (gentle decay).
+void CanaryVoiceTuneAudioProcessorEditor::updateKeyboardFromAudioRing() {
+  // popLatestNoteEvent returns -2 when the ring is empty (no change since
+  // last tick), -1 when the singer is silent, or 0..87 for a real note.
+  int latest = audioProcessor.popLatestNoteEvent();
+  if (latest == -2) return;
+
+  // 0 Hz tells the keyboard to clear its highlight. Use float arithmetic for
+  // the semitone -> Hz conversion: integer division would collapse all notes
+  // within an octave to the same A.
+  float hz = (latest >= 0)
+                 ? 440.0f * std::pow(2.0f, (float)((latest + 21) - 69) / 12.0f)
+                 : 0.0f;
+  if (pianoKeyboard.updateDetectedPitch(hz))
+    pianoKeyboard.repaint();
+}
+
+void CanaryVoiceTuneAudioProcessorEditor::updatePopLamp() {
+  // Asymmetric smoothing: lamp lights up immediately when a pop is detected
+  // (a=0.6 ≈ ~50 ms rise) but decays gently after (a=0.15 ≈ ~200 ms fall).
+  float target  = audioProcessor.getPopActivity();
   float current = popKnob.getLampIntensity();
   float a = (target > current) ? 0.6f : 0.15f;
   popKnob.setLampIntensity(current + a * (target - current));

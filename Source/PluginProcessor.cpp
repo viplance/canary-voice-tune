@@ -15,16 +15,15 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
       apvts(*this, nullptr, "Parameters", createParameterLayout())
 #endif
 {
-  attackParam = apvts.getRawParameterValue("ATTACK");
-  releaseParam = apvts.getRawParameterValue("RELEASE");
-  rangeParam = apvts.getRawParameterValue("RANGE");
-  vibratoParam = apvts.getRawParameterValue("VIBRATO");
+  attackParam    = apvts.getRawParameterValue("ATTACK");
+  releaseParam   = apvts.getRawParameterValue("RELEASE");
+  rangeParam     = apvts.getRawParameterValue("RANGE");
+  vibratoParam   = apvts.getRawParameterValue("VIBRATO");
   sibilantsParam = apvts.getRawParameterValue("SIBILANTS");
-  breathParam = apvts.getRawParameterValue("BREATH");
-  popParam = apvts.getRawParameterValue("POP");
-  for (int i = 0; i < 88; ++i) {
+  breathParam    = apvts.getRawParameterValue("BREATH");
+  popParam       = apvts.getRawParameterValue("POP");
+  for (int i = 0; i < 88; ++i)
     keyParams[i] = apvts.getRawParameterValue("KEY_" + juce::String(i));
-  }
 }
 
 CanaryVoiceTuneAudioProcessor::~CanaryVoiceTuneAudioProcessor() {}
@@ -49,24 +48,22 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Breath: peak/bell gain around 3 kHz for breathiness/air.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"BREATH", 1}, "Breath", -12.0f, 12.0f, 0.0f));
-  // Pop Filter: trigger threshold (dB) for the plosive detector.
-  // 0 dB = filter never triggers (effectively disabled);
-  // lower (e.g. -24 dB) = filter triggers more readily on quieter plosives.
+  // Pop Filter: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"POP", 1}, "Pop Filter", -24.0f, 0.0f, 0.0f));
 
-  // Keys 0-87 for A0 to C8. 1 means enabled, 0 means disabled.
+  // Keys 0-87 for A0 to C8. true = note is in the active scale.
   for (int i = 0; i < 88; ++i) {
     juce::String idText = "KEY_" + juce::String(i);
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{idText, 1}, idText, true));
   }
 
-  return {params.begin(), params.end()};
+  return { params.begin(), params.end() };
 }
 
 void CanaryVoiceTuneAudioProcessor::prepareToPlay(double sampleRate,
-                                                       int samplesPerBlock) {
+                                                  int samplesPerBlock) {
   pitchDetector.prepare(sampleRate, samplesPerBlock);
   pitchShifter.prepare(sampleRate, samplesPerBlock);
   setLatencySamples(pitchShifter.getLatencySamples());
@@ -93,318 +90,263 @@ bool CanaryVoiceTuneAudioProcessor::isBusesLayoutSupported(
 #endif
 }
 
+// =============================================================================
+// processBlock helpers
+// =============================================================================
+
+void CanaryVoiceTuneAudioProcessor::buildMonoMix(
+    const juce::AudioBuffer<float>& buffer) {
+  // Pick whichever channel has more energy in this block. A naive (L+R)/2
+  // would silently cancel anti-phase stereo material (Haas spreads, stereo
+  // wideners) and the detector would then report unvoiced even though the
+  // singer is clearly audible.
+  int n = buffer.getNumSamples();
+  monoMix.resize((size_t)n);
+  if (buffer.getNumChannels() == 1) {
+    std::copy_n(buffer.getReadPointer(0), n, monoMix.data());
+    return;
+  }
+  const float* l = buffer.getReadPointer(0);
+  const float* r = buffer.getReadPointer(1);
+  double eL = 0.0, eR = 0.0;
+  for (int i = 0; i < n; ++i) { eL += l[i] * l[i]; eR += r[i] * r[i]; }
+  std::copy_n((eL >= eR) ? l : r, n, monoMix.data());
+}
+
+void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
+  lockedMidi          = -1;
+  lockEngageSamples   = 0;
+  lockReleaseSamples  = 0;
+  smoothedMidi        = -1.0f;
+  smoothedTargetMidi  = -1.0f;
+  voicedSampleCount   = 0;
+}
+
+int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
+    float detectedHz, const bool* activeKeys, float blockSize, float sr,
+    float attackMs, float correctionStrength, float vibratoRemoval,
+    float& outRatio) {
+  voicedSampleCount += (int)blockSize;
+
+  float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
+
+  // ---- Vibrato smoothing (adaptive lowpass on the pitch in semitone domain)
+  // Wide-amplitude jumps (real note changes) bypass the smoothing so the
+  // tracker doesn't lag a ratio behind on melodic transitions.
+  float blockDt   = blockSize / sr;
+  float vibTimeMs = 1.0f + vibratoRemoval * 200.0f;
+  if (smoothedMidi < 0.0f) {
+    smoothedMidi = floatMidi;
+  } else {
+    float delta = std::abs(floatMidi - smoothedMidi);
+    float jumpFactor;
+    if (delta < 0.5f)      jumpFactor = 0.0f;
+    else if (delta > 1.2f) jumpFactor = 1.0f;
+    else                   jumpFactor = (delta - 0.5f) / 0.7f;
+
+    float effectiveTimeMs = vibTimeMs * (1.0f - jumpFactor) + 1.0f * jumpFactor;
+    float adaptiveAlpha = 1.0f - std::exp(-blockDt / (effectiveTimeMs / 1000.0f));
+    smoothedMidi += adaptiveAlpha * (floatMidi - smoothedMidi);
+  }
+  float effectiveMidi = smoothedMidi * vibratoRemoval
+                      + floatMidi    * (1.0f - vibratoRemoval);
+
+  // ---- Pick the active key closest to the smoothed pitch ------------------
+  float lockPitch = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
+  int bestMidi = -1;
+  float minDist = 1e9f;
+  for (int testMidi = 21; testMidi <= 108; ++testMidi) {
+    if (! activeKeys[testMidi - 21]) continue;
+    float d = std::abs(lockPitch - (float)testMidi);
+    if (d < minDist) { minDist = d; bestMidi = testMidi; }
+  }
+  if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
+
+  // ---- Note lock ----------------------------------------------------------
+  // Lock the first stable bestMidi after a 50 ms grace; release & re-lock if
+  // the singer sustains a different note for >120 ms (real melodic move).
+  const int lockGraceSamples = (int)(sr * 0.050f);
+  if (voicedSampleCount >= lockGraceSamples && lockedMidi < 0) {
+    lockedMidi = bestMidi;
+    lockEngageSamples = 0;
+    lockReleaseSamples = 0;
+  }
+  if (lockedMidi >= 0) {
+    lockEngageSamples += (int)blockSize;
+    float driftFromLock = std::abs(effectiveMidi - (float)lockedMidi);
+    if (driftFromLock > 1.5f) {
+      lockReleaseSamples += (int)blockSize;
+      if (1000.0f * (float)lockReleaseSamples / sr > 120.0f) {
+        lockedMidi = bestMidi;
+        lockEngageSamples = 0;
+        lockReleaseSamples = 0;
+      }
+    } else {
+      lockReleaseSamples = 0;
+    }
+  }
+
+  // ---- Lock-engage fade + drift bypass -----------------------------------
+  // While engaging, force more dry; once engaged, use drift zones:
+  //   <1 semitone : full tune
+  //    1..2       : blend toward dry
+  //   >2          : full bypass (so a fast glissando isn't quack-tuned)
+  float engageFade = juce::jlimit(0.0f, 1.0f,
+                                  1000.0f * (float)lockEngageSamples / sr / attackMs);
+  float lockBypass = 1.0f;
+  if (lockedMidi >= 0) {
+    bestMidi = lockedMidi;
+    float drift = std::abs(effectiveMidi - (float)lockedMidi);
+    float driftBypass = (drift > 1.0f) ? juce::jlimit(0.0f, 1.0f, drift - 1.0f) : 0.0f;
+    lockBypass = juce::jmax(driftBypass, 1.0f - engageFade);
+  }
+
+  // ---- Compute the ratio --------------------------------------------------
+  float diff           = effectiveMidi - bestMidi;
+  float remainingDiff  = diff * (1.0f - correctionStrength);
+  float rawTargetMidi  = bestMidi + remainingDiff;
+  rawTargetMidi        = rawTargetMidi * (1.0f - lockBypass)
+                       + effectiveMidi * lockBypass;
+
+  // Short portamento smooths the ±1 semitone step that occurs when bestMidi
+  // crosses a bucket boundary.
+  float blockDtMs       = 1000.0f * blockSize / sr;
+  float portamentoTimeMs = 15.0f;
+  float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
+  if (smoothedTargetMidi < 0.0f) smoothedTargetMidi = rawTargetMidi;
+  else                            smoothedTargetMidi += targetAlpha
+                                      * (rawTargetMidi - smoothedTargetMidi);
+
+  float targetHz = 440.0f * std::pow(2.0f, (smoothedTargetMidi - 69.0f) / 12.0f);
+  outRatio = juce::jlimit(0.5f, 2.0f, targetHz / detectedHz);
+  return bestMidi;
+}
+
+void CanaryVoiceTuneAudioProcessor::pushNoteEvent(int noteIndex) {
+  if (noteIndex == lastPushedNote) return;
+  lastPushedNote = noteIndex;
+  int w = noteHistoryWriteIdx.load(std::memory_order_relaxed);
+  noteHistory[w].store(noteIndex, std::memory_order_release);
+  noteHistoryWriteIdx.store((w + 1) % kNoteHistorySize,
+                            std::memory_order_release);
+}
+
+int CanaryVoiceTuneAudioProcessor::popLatestNoteEvent() {
+  int w = noteHistoryWriteIdx.load(std::memory_order_acquire);
+  int r = noteHistoryReadIdx.load(std::memory_order_relaxed);
+  if (r == w) return -2; // ring empty
+  int latest = -2;
+  while (r != w) {
+    latest = noteHistory[r].load(std::memory_order_acquire);
+    r = (r + 1) % kNoteHistorySize;
+  }
+  noteHistoryReadIdx.store(r, std::memory_order_release);
+  return latest;
+}
+
+void CanaryVoiceTuneAudioProcessor::renderPreviewTone(
+    juce::AudioBuffer<float>& buffer) {
+  int samplesRem = previewSamplesRemaining.load();
+  if (samplesRem <= 0) return;
+
+  float freq        = previewFrequencyHz.load();
+  float sr          = (float)getSampleRate();
+  float phaseDelta  = freq * juce::MathConstants<float>::twoPi / sr;
+  int   total       = (int)(sr * 0.5f);
+  int   numSamples  = buffer.getNumSamples();
+  int   numChannels = buffer.getNumChannels();
+
+  for (int i = 0; i < numSamples && samplesRem > 0; ++i) {
+    // Linear fade-in / fade-out at the ends to avoid clicks (1000 samples
+    // each = ~22 ms at 44.1 kHz).
+    float env = 1.0f;
+    if (samplesRem < 1000)              env  =        (float)samplesRem  / 1000.0f;
+    int played = total - samplesRem;
+    if (played < 1000)                  env *=        (float)played      / 1000.0f;
+
+    float sample = std::sin(previewPhase) * 0.2f * env;
+    previewPhase += phaseDelta;
+    if (previewPhase >= juce::MathConstants<float>::twoPi)
+      previewPhase -= juce::MathConstants<float>::twoPi;
+
+    for (int ch = 0; ch < numChannels; ++ch)
+      buffer.addSample(ch, i, sample);
+    --samplesRem;
+  }
+  previewSamplesRemaining.store(samplesRem);
+}
+
+// =============================================================================
+// processBlock — flow only; details live in the helpers above
+// =============================================================================
+
 void CanaryVoiceTuneAudioProcessor::processBlock(
     juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
+  juce::ignoreUnused(midiMessages);
   juce::ScopedNoDenormals noDenormals;
-  auto totalNumInputChannels = getTotalNumInputChannels();
-  auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+  auto totalNumInputChannels  = getTotalNumInputChannels();
+  auto totalNumOutputChannels = getTotalNumOutputChannels();
   for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
     buffer.clear(i, 0, buffer.getNumSamples());
 
-  // Basic processing:
-  // Wait for pitch detector
-  float attackMs = attackParam ? attackParam->load() : 10.0f;
-  float releaseMs = releaseParam ? releaseParam->load() : 100.0f;
-  float rangePercent = rangeParam ? rangeParam->load() : 100.0f;
-  // 0% = no correction (keep original deviation from note),
-  // 100% = full snap to nearest active note.
-  float correctionStrength = rangePercent / 100.0f;
-  float vibratoRemoval = vibratoParam ? (vibratoParam->load() / 100.0f) : 0.0f;
+  if (totalNumInputChannels <= 0) return;
+
+  // ---- Snapshot user controls --------------------------------------------
+  float attackMs           = attackParam   ? attackParam->load()   : 10.0f;
+  float releaseMs          = releaseParam  ? releaseParam->load()  : 100.0f;
+  float correctionStrength = (rangeParam   ? rangeParam->load()    : 0.0f) / 100.0f;
+  float vibratoRemoval     = (vibratoParam ? vibratoParam->load()  : 0.0f) / 100.0f;
+  float sibilantsDb        = sibilantsParam? sibilantsParam->load(): 0.0f;
+  float breathDb           = breathParam   ? breathParam->load()   : 0.0f;
+  float popMaxDb           = popParam      ? popParam->load()      : 0.0f;
 
   bool activeKeys[88];
   bool anyKeyActive = false;
   for (int j = 0; j < 88; ++j) {
     activeKeys[j] = keyParams[j] ? (keyParams[j]->load() > 0.5f) : true;
-    if (activeKeys[j])
-      anyKeyActive = true;
+    if (activeKeys[j]) anyKeyActive = true;
   }
 
-  if (totalNumInputChannels > 0) {
-    // Build a pitch-detection signal from the input. We can't simply average
-    // L and R: anti-phase or near-anti-phase stereo (some stereo wideners,
-    // Haas-style spreads) would cancel to silence and the detector would
-    // fall unvoiced even though the user clearly hears the singer. Instead,
-    // pick whichever channel has more energy in this block — for a normal
-    // panned vocal that's the side it's panned to; for in-phase stereo it
-    // doesn't matter; for anti-phase stereo we still get a good signal.
-    int n = buffer.getNumSamples();
-    monoMix.resize((size_t)n);
-    if (totalNumInputChannels == 1) {
-      std::copy_n(buffer.getReadPointer(0), n, monoMix.data());
-    } else {
-      const float* l = buffer.getReadPointer(0);
-      const float* r = buffer.getReadPointer(1);
-      double eL = 0.0, eR = 0.0;
-      for (int i = 0; i < n; ++i) { eL += l[i]*l[i]; eR += r[i]*r[i]; }
-      const float* src = (eL >= eR) ? l : r;
-      std::copy_n(src, n, monoMix.data());
-    }
-    float detectedHz = pitchDetector.process(monoMix.data(), n);
+  // ---- Pitch detection ---------------------------------------------------
+  buildMonoMix(buffer);
+  float detectedHz = pitchDetector.process(monoMix.data(), buffer.getNumSamples());
+  bool isVoiced = (detectedHz > 0.0f);
 
-    bool isVoiced = (detectedHz > 0.0f);
-    float actualOutputHz = detectedHz;
-    float targetRatio = 1.0f;
+  // ---- Maintain voicing state at segment boundaries ----------------------
+  if (isVoiced && !wasVoiced) resetVoicingState();
+  if (!isVoiced)              resetVoicingState();
+  wasVoiced = isVoiced;
 
-    // On voicing onset, drop hysteresis memory and reset the smoothed pitch
-    // tracker so we don't "magnet" to the previous phrase's note (chirp/quack
-    // at the start of the word) and so vibrato smoothing starts from the
-    // current pitch rather than ramping in from the old value.
-    if (isVoiced && !wasVoiced) {
-      lastBestMidi = -1;
-      lockedMidi = -1;
-      lockEngageSamples = 0;
-      lockReleaseSamples = 0;
-      smoothedMidi = -1.0f;
-      smoothedTargetMidi = -1.0f;
-      voicedSampleCount = 0;
-    }
-    if (!isVoiced) {
-      // Voicing ended — release the note lock so the next phrase can
-      // capture a new note.
-      lockedMidi = -1;
-      lockEngageSamples = 0;
-      lockReleaseSamples = 0;
-    }
-    wasVoiced = isVoiced;
-
-    const double sr = getSampleRate();
-    const int onsetGraceSamples = (int)(sr * 0.050); // 50ms
-
-    if (isVoiced) {
-      voicedSampleCount += buffer.getNumSamples();
-    }
-
-    if (isVoiced && anyKeyActive) {
-      float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
-
-      // Smooth the pitch in the log (semitone) domain to remove vibrato.
-      // The lowpass time constant scales with the Remove Vibrato amount.
-      // We also apply an adaptive "snap" so that real note changes (octave
-      // leaps, melodic transitions) don't lag behind. The snap itself is
-      // disabled at 100% Remove Vibrato — at full strength the user wants a
-      // perfectly flat tone with no sudden ratio jumps, even if it costs a
-      // bit of latency on note changes. Without disabling the snap, slow
-      // pitch drift on a held note eventually trips the threshold and causes
-      // an audible "tuning jump".
-      float blockDt = (float)buffer.getNumSamples() / (float)sr;
-      float vibTimeMs = 1.0f + vibratoRemoval * 200.0f; // 1ms .. 201ms
-      if (smoothedMidi < 0.0f) {
-        smoothedMidi = floatMidi;
-      } else {
-        float delta = std::abs(floatMidi - smoothedMidi);
-        // 0..0.5 semitone: full smoothing (vibrato range).
-        // 0.5..1.2 semitone: smoothing relaxes linearly.
-        // > 1.2 semitone: snap (real note change).
-        float jumpFactor;
-        if (delta < 0.5f)      jumpFactor = 0.0f;
-        else if (delta > 1.2f) jumpFactor = 1.0f;
-        else                   jumpFactor = (delta - 0.5f) / 0.7f;
-
-        // Do NOT suppress jumpFactor by vibratoRemoval. We always want real
-        // note changes to snap through quickly — otherwise the smoother trails
-        // behind and the shifter chases the old note, causing a sweep/quack.
-
-        float effectiveTimeMs = vibTimeMs * (1.0f - jumpFactor) + 1.0f * jumpFactor;
-        float adaptiveAlpha = 1.0f - std::exp(-blockDt / (effectiveTimeMs / 1000.0f));
-        smoothedMidi += adaptiveAlpha * (floatMidi - smoothedMidi);
-      }
-      float effectiveMidi = smoothedMidi * vibratoRemoval
-                          + floatMidi * (1.0f - vibratoRemoval);
-
-      // Find the active key whose pitch is closest to effectiveMidi in
-      // fractional semitones. Measuring against the floating-point pitch
-      // (not the rounded nearestMidi) is essential when whole regions of
-      // the keyboard are disabled — otherwise an octave-wide gap centered
-      // slightly above the input would always resolve down (because of
-      // the iteration order), even when the real pitch is closer to the
-      // first active note above the gap.
-      // Lock acquisition grace window. The very first detected pitches at
-      // the start of a voiced segment are unreliable — the YIN detector
-      // can drop an octave error or a sub-pulse glitch on the first 5–30ms.
-      // We wait this grace before locking the note, so that smoothedMidi
-      // has converged to a stable weighted average. While waiting, the
-      // shifter passes the signal through (ratio = 1.0).
-      const int lockGraceSamples = (int)(sr * 0.050); // 50 ms
-      bool lockReady = (voicedSampleCount >= lockGraceSamples);
-
-      // Choose the active key closest to the *smoothed* pitch (smoothedMidi)
-      // when locking — this is the weighted-average pitch of the first
-      // ~50ms, which is much more reliable than the instantaneous
-      // (potentially octave-erroneous) first detection.
-      float lockPitch = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
-      int bestMidi = -1;
-      float minDist = 1e9f;
-      for (int testMidi = 21; testMidi <= 108; ++testMidi) {
-        int keyIndex = testMidi - 21;
-        if (! activeKeys[keyIndex]) continue;
-        float d = std::abs(lockPitch - (float)testMidi);
-        if (d < minDist) {
-          minDist = d;
-          bestMidi = testMidi;
-        }
-      }
-      if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
-
-      // Note lock — captures the first stable bestMidi within a voiced
-      // segment, so short glissando excursions don't drag the tune.
-      // BUT: in a connected melody (no consonants between notes), the
-      // singer simply moves to a different note while still voiced. To
-      // distinguish "short pitch wobble" from "moved to a new note", we
-      // count consecutive samples spent far (>1.5 semitones) from the
-      // locked note. If that exceeds ~120 ms — clearly a real note change —
-      // we release and re-lock to whatever active key is closest now. This
-      // makes the keyboard follow the melody, not just the first note.
-      if (lockReady && lockedMidi < 0) {
-        lockedMidi = bestMidi;
-        lockEngageSamples = 0;
-        lockReleaseSamples = 0;
-      }
-
-      if (lockedMidi >= 0) {
-        lockEngageSamples += buffer.getNumSamples();
-        float driftFromLock = std::abs(effectiveMidi - (float)lockedMidi);
-        if (driftFromLock > 1.5f) {
-          lockReleaseSamples += buffer.getNumSamples();
-          float ms = 1000.0f * (float)lockReleaseSamples / (float)sr;
-          if (ms > 120.0f) {
-            // Sustained move to a new note — re-lock onto the new closest
-            // active key (computed above as bestMidi).
-            lockedMidi = bestMidi;
-            lockEngageSamples = 0;
-            lockReleaseSamples = 0;
-          }
-        } else {
-          lockReleaseSamples = 0; // back near the locked note
-        }
-      }
-
-      // Lock-engage fade: smooth the bypass-to-tune transition over the
-      // user's Attack window so a small Attack value doesn't quack.
-      float lockEngageMs = 1000.0f * (float)lockEngageSamples / (float)sr;
-      float engageFade = juce::jlimit(0.0f, 1.0f, lockEngageMs / attackMs);
-
-      float lockBypass = 1.0f;
-      if (lockedMidi >= 0) {
-        bestMidi = lockedMidi;
-        float driftSemis = std::abs(effectiveMidi - (float)lockedMidi);
-        float driftBypass = (driftSemis > 1.0f)
-            ? juce::jlimit(0.0f, 1.0f, (driftSemis - 1.0f) / 1.0f)
-            : 0.0f;
-        lockBypass = juce::jmax(driftBypass, 1.0f - engageFade);
-      }
-      lastBestMidi = bestMidi;
-
-      float diff = effectiveMidi - bestMidi;
-      float remainingDiff = diff * (1.0f - correctionStrength);
-      float rawTargetMidi = bestMidi + remainingDiff;
-      rawTargetMidi = rawTargetMidi * (1.0f - lockBypass)
-                    + effectiveMidi * lockBypass;
-
-      // Smooth the *target* note in the log domain. When the input glides
-      // across a bucket boundary, bestMidi jumps by a whole semitone — without
-      // smoothing this becomes an instant ±1 semitone step in targetRatio,
-      // which the shifter ramps over Attack ms and is heard as a "duck" /
-      // chirp on note transitions. A short fixed portamento smooths bucket
-      // crossings without adding noticeable lag.
-      float blockDtMs = 1000.0f * (float)buffer.getNumSamples() / (float)sr;
-      float portamentoTimeMs = 15.0f;
-      float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
-      if (smoothedTargetMidi < 0.0f) {
-        smoothedTargetMidi = rawTargetMidi;
-      } else {
-        smoothedTargetMidi += targetAlpha * (rawTargetMidi - smoothedTargetMidi);
-      }
-      float targetHz = 440.0f * std::pow(2.0f, (smoothedTargetMidi - 69.0f) / 12.0f);
-      targetRatio = targetHz / detectedHz;
-
-      // Limit ratio to prevent crazy shifts
-      if (targetRatio > 2.0f)
-        targetRatio = 2.0f;
-      if (targetRatio < 0.5f)
-        targetRatio = 0.5f;
-
-      // (Old onset grace removed: lock-engage fade now does the same job
-      // smoothly — the lockBypass starts at 1.0 in grace and fades to 0
-      // across the Attack window after lockedMidi is acquired. The hard
-      // cutoff "ratio = 1.0 for first 50ms" caused a step at exactly 50ms
-      // which the shifter at low Attack reproduced as a quack.)
-
-      actualOutputHz = 440.0f * std::pow(2.0f, (bestMidi - 69.0f) / 12.0f);
-    }
-
-    if (isVoiced)
-      currentDetectedPitch.store(actualOutputHz);
-    else
-      currentDetectedPitch.store(0.0f);
-
-    // Push every note CHANGE into the lock-free ring so the UI never misses
-    // a note even if several go by between timer callbacks.
-    int currentNote = -1;
-    if (isVoiced && actualOutputHz > 0.0f) {
-      int midi = (int)std::round(69.0f + 12.0f * std::log2(actualOutputHz / 440.0f));
-      if (midi >= 21 && midi <= 108) currentNote = midi - 21;
-    }
-    int prev = lastPushedNote.load(std::memory_order_relaxed);
-    if (currentNote != prev) {
-      lastPushedNote.store(currentNote, std::memory_order_relaxed);
-      int w = noteHistoryWriteIdx.load(std::memory_order_relaxed);
-      noteHistory[w].store(currentNote, std::memory_order_release);
-      noteHistoryWriteIdx.store((w + 1) % kNoteHistorySize,
-                                std::memory_order_release);
-    }
-
-    pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced, detectedHz);
-    float sibilantsDb = sibilantsParam ? sibilantsParam->load() : 0.0f;
-    float breathDb    = breathParam    ? breathParam->load()    : 0.0f;
-    float popMaxDb    = popParam       ? popParam->load()       : 0.0f;
-    pitchShifter.setToneShaping(sibilantsDb, breathDb);
-    pitchShifter.setPopFilter(popMaxDb);
-    pitchShifter.process(buffer);
+  // ---- Compute target ratio + the note we're tuning to -------------------
+  float targetRatio = 1.0f;
+  int displayedMidi = -1;
+  if (isVoiced && anyKeyActive) {
+    displayedMidi = chooseTargetNoteAndRatio(
+        detectedHz, activeKeys,
+        (float)buffer.getNumSamples(), (float)getSampleRate(),
+        attackMs, correctionStrength, vibratoRemoval, targetRatio);
   }
 
-  // Preview tone generation
-  int samplesRem = previewSamplesRemaining.load();
-  if (samplesRem > 0) {
-    float freq = previewFrequencyHz.load();
-    float phaseDelta = (freq * 2.0f * juce::MathConstants<float>::pi) / static_cast<float>(getSampleRate());
-    int totalSamplesForTone = static_cast<int>(getSampleRate() * 0.5);
+  // ---- Notify UI of any note-change event --------------------------------
+  int displayedNoteIdx = (isVoiced && displayedMidi >= 21 && displayedMidi <= 108)
+                            ? (displayedMidi - 21) : -1;
+  pushNoteEvent(displayedNoteIdx);
 
-    for (int i = 0; i < buffer.getNumSamples(); ++i) {
-      if (samplesRem > 0) {
-        float env = 1.0f;
-        // Fade out
-        if (samplesRem < 1000) {
-          env = static_cast<float>(samplesRem) / 1000.0f;
-        }
-        // Fade in
-        int samplesPlayed = totalSamplesForTone - samplesRem;
-        if (samplesPlayed < 1000) {
-          env *= static_cast<float>(samplesPlayed) / 1000.0f;
-        }
+  // ---- Hand off to the shifter -------------------------------------------
+  pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced, detectedHz);
+  pitchShifter.setToneShaping(sibilantsDb, breathDb);
+  pitchShifter.setPopFilter(popMaxDb);
+  pitchShifter.process(buffer);
 
-        float sample = std::sin(previewPhase) * 0.2f * env;
-        previewPhase += phaseDelta;
-        if (previewPhase >= 2.0f * juce::MathConstants<float>::pi) {
-          previewPhase -= 2.0f * juce::MathConstants<float>::pi;
-        }
-
-        for (int ch = 0; ch < totalNumOutputChannels; ++ch) {
-          buffer.addSample(ch, i, sample);
-        }
-        samplesRem--;
-      } else {
-        break;
-      }
-    }
-    previewSamplesRemaining.store(samplesRem);
-  }
+  // ---- Preview tone (when the user clicks a key on the keyboard) ---------
+  renderPreviewTone(buffer);
 }
 
 void CanaryVoiceTuneAudioProcessor::playPreviewTone(float freq) {
-    previewFrequencyHz.store(freq);
-    previewSamplesRemaining.store(static_cast<int>(getSampleRate() * 0.5));
-    previewPhase = 0.0f;
+  previewFrequencyHz.store(freq);
+  previewSamplesRemaining.store((int)(getSampleRate() * 0.5));
+  previewPhase = 0.0f;
 }
 
 juce::AudioProcessorEditor *CanaryVoiceTuneAudioProcessor::createEditor() {
@@ -419,12 +361,11 @@ void CanaryVoiceTuneAudioProcessor::getStateInformation(
 }
 
 void CanaryVoiceTuneAudioProcessor::setStateInformation(const void *data,
-                                                             int sizeInBytes) {
+                                                        int sizeInBytes) {
   std::unique_ptr<juce::XmlElement> xmlState(
       getXmlFromBinary(data, sizeInBytes));
-  if (xmlState.get() != nullptr)
-    if (xmlState->hasTagName(apvts.state.getType()))
-      apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+  if (xmlState && xmlState->hasTagName(apvts.state.getType()))
+    apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {

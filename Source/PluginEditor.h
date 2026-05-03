@@ -18,6 +18,9 @@ public:
   void timerCallback() override;
 
 private:
+  void updateKeyboardFromAudioRing();
+  void updatePopLamp();
+
   CanaryVoiceTuneAudioProcessor &audioProcessor;
 
   RotaryKnob attackKnob;

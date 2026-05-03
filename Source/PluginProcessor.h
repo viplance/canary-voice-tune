@@ -35,27 +35,38 @@ public:
   void setStateInformation(const void *data, int sizeInBytes) override;
 
   juce::AudioProcessorValueTreeState apvts;
-  std::atomic<float> currentDetectedPitch{0.0f};
 
-  // Lock-free note-change history so the UI can see every distinct note that
-  // played between two timer callbacks (a 60Hz timer can skip notes shorter
-  // than ~16 ms otherwise). Audio thread pushes whenever the chosen midi
-  // note changes; UI thread drains the ring on each tick.
-  static constexpr int kNoteHistorySize = 32;
-  std::atomic<int> noteHistory[kNoteHistorySize] = {};
-  std::atomic<int> noteHistoryWriteIdx { 0 };
-  int noteHistoryReadIdx = 0;          // UI-thread only
-  std::atomic<int> lastPushedNote { -1 }; // audio-thread only writer
+  // -------- UI-facing reads --------
+  // Drain the audio-thread note ring and return the most-recent note seen
+  // since the last call (-1 = no voiced note now, -2 = ring was empty so the
+  // UI should keep its current state). Safe to call from any thread but
+  // intended for the message thread only.
+  int popLatestNoteEvent();
 
   float getPopActivity() const { return pitchShifter.getPopActivity(); }
 
+  // -------- preview tone --------
   void playPreviewTone(float freq);
-  std::atomic<float> previewFrequencyHz{0.0f};
-  std::atomic<int> previewSamplesRemaining{0};
-  float previewPhase = 0.0f;
 
 private:
   juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+  // ---- processBlock helpers ----
+  void buildMonoMix(const juce::AudioBuffer<float>& buffer);
+  void resetVoicingState();
+  // Computes the corrected target ratio for the current block. Returns the
+  // midi note that the singer is being tuned to (used for keyboard display)
+  // and writes the ratio into outRatio.
+  int chooseTargetNoteAndRatio(float detectedHz,
+                               const bool* activeKeys,
+                               float blockSize,
+                               float sr,
+                               float attackMs,
+                               float correctionStrength,
+                               float vibratoRemoval,
+                               float& outRatio);
+  void pushNoteEvent(int noteIndex /* -1 if unvoiced, else 0..87 */);
+  void renderPreviewTone(juce::AudioBuffer<float>& buffer);
 
   PitchDetector pitchDetector;
   PitchShifter pitchShifter;
@@ -68,15 +79,32 @@ private:
   std::atomic<float> *breathParam = nullptr;
   std::atomic<float> *popParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
-  std::vector<float> monoMix; // scratch for stereo->mono pitch detection
-  int lastBestMidi = -1;
+
+  std::vector<float> monoMix; // scratch buffer for pitch detector input
+
+  // Per-voiced-segment tracking (audio thread only)
   int lockedMidi = -1;        // captured note for the current voiced segment
-  int lockEngageSamples = 0;  // samples since lockedMidi was set (for fade-in)
-  int lockReleaseSamples = 0; // samples spent far from lockedMidi (for relock)
+  int lockEngageSamples = 0;  // samples since lockedMidi was set (fade-in)
+  int lockReleaseSamples = 0; // consecutive samples far from lockedMidi
   bool wasVoiced = false;
   float smoothedMidi = -1.0f;
   float smoothedTargetMidi = -1.0f;
   int voicedSampleCount = 0;
+
+  // Lock-free SPSC ring of note-change events. The audio thread pushes one
+  // entry whenever the displayed note index changes; the UI thread drains
+  // it on each timer tick. This guarantees fast melodic passages aren't
+  // visually skipped between UI frames.
+  static constexpr int kNoteHistorySize = 32;
+  std::atomic<int> noteHistory[kNoteHistorySize] = {};
+  std::atomic<int> noteHistoryWriteIdx { 0 };
+  std::atomic<int> noteHistoryReadIdx { 0 };
+  int lastPushedNote = -1; // audio thread only
+
+  // Preview tone state
+  std::atomic<float> previewFrequencyHz { 0.0f };
+  std::atomic<int>   previewSamplesRemaining { 0 };
+  float previewPhase = 0.0f;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
       CanaryVoiceTuneAudioProcessor)
