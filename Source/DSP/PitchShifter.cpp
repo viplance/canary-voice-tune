@@ -70,6 +70,31 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
 
     tempOut.resize(131072, 0.0f);
     lastOutSample = 0.0f;
+
+    // Crossover filters: Linkwitz-Riley LR4 (24dB/oct) gives a perfectly
+    // flat magnitude response when the low and high outputs are summed
+    // back, so a dry signal split-then-summed equals the original. We use
+    // the same crossover frequency for the wet lowpass and the dry highpass
+    // so the recombination at the output is also flat.
+    juce::dsp::ProcessSpec spec;
+    spec.sampleRate = currentSampleRate;
+    spec.maximumBlockSize = (juce::uint32)samplesPerBlock;
+    spec.numChannels = 1;
+    dryHighpass.prepare(spec);
+    wetLowpass.prepare(spec);
+    dryHighpass.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
+    wetLowpass.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+    dryHighpass.setCutoffFrequency(crossoverHz);
+    wetLowpass.setCutoffFrequency(crossoverHz);
+    dryHighpass.reset();
+    wetLowpass.reset();
+
+    // Dry delay must equal the wet path's total latency so that the high
+    // band realigns with the shifted low/mid band when summed.
+    dryDelayLength = currentLatency;
+    if (dryDelayLength < 1) dryDelayLength = 1;
+    dryDelayBuffer.assign((size_t)dryDelayLength + 16, 0.0f);
+    dryDelayWritePos = 0;
 }
 
 void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
@@ -92,6 +117,20 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 
     int numSamples = buffer.getNumSamples();
     auto* channelData = buffer.getWritePointer(0);
+
+    // 1) Stash dry input into the delay line and pre-extract its
+    //    high-frequency component. The high-band needs to come out exactly
+    //    in sync with the shifted low/mid coming back from RubberBand.
+    if ((int)tempIn.size() < numSamples) tempIn.resize((size_t)numSamples * 2);
+    std::copy_n(channelData, numSamples, tempIn.data());
+
+    // Push the unfiltered dry into the delay line; we'll filter on read so
+    // the highpass operates on a continuous stream without splice points.
+    int dryBufLen = (int)dryDelayBuffer.size();
+    for (int i = 0; i < numSamples; ++i) {
+        dryDelayBuffer[(size_t)dryDelayWritePos] = tempIn[(size_t)i];
+        dryDelayWritePos = (dryDelayWritePos + 1) % dryBufLen;
+    }
 
     // Compute average ratio across this block. We don't update RubberBand's
     // pitch scale per-sample — that would tax the engine. We update once per
@@ -162,6 +201,32 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
             lastOutSample *= decay;
             channelData[i] = lastOutSample;
         }
+    }
+
+    // 2) Apply the air-band crossover. Lowpass the wet (RubberBand) output
+    //    and add a time-aligned highpass of the dry input. Result: shifted
+    //    body up to crossoverHz, original treble above. Linkwitz-Riley LR4
+    //    sums to flat magnitude, so unshifted material reconstructs exactly.
+    juce::dsp::AudioBlock<float> wetBlock(&channelData, 1, (size_t)numSamples);
+    juce::dsp::ProcessContextReplacing<float> wetCtx(wetBlock);
+    wetLowpass.process(wetCtx);
+
+    // Read the delayed dry into a temp buffer and highpass it.
+    if ((int)tempOut.size() < numSamples) tempOut.resize((size_t)numSamples);
+    int readPos = dryDelayWritePos - dryDelayLength;
+    while (readPos < 0) readPos += dryBufLen;
+    for (int i = 0; i < numSamples; ++i) {
+        tempOut[(size_t)i] = dryDelayBuffer[(size_t)readPos];
+        readPos = (readPos + 1) % dryBufLen;
+    }
+    float* dryHighData = tempOut.data();
+    juce::dsp::AudioBlock<float> hiBlock(&dryHighData, 1, (size_t)numSamples);
+    juce::dsp::ProcessContextReplacing<float> hiCtx(hiBlock);
+    dryHighpass.process(hiCtx);
+
+    // Sum dry highs onto the wet lows.
+    for (int i = 0; i < numSamples; ++i) {
+        channelData[i] += dryHighData[i];
     }
 
     // Mirror to right channel

@@ -79,6 +79,7 @@ target_link_libraries(CanaryVoiceTune PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
+    juce::juce_dsp
     "-framework Accelerate"
 )
 

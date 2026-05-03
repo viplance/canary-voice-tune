@@ -40,4 +40,17 @@ private:
 
     std::vector<float> tempIn;
     std::vector<float> tempOut;
+
+    // High-frequency air-band bypass: the input is split via a high-shelf
+    // crossover. The low/mid band goes through RubberBand (which loses some
+    // high-frequency content via its formant cepstral analysis); the high
+    // band is delayed by the engine's latency and mixed back in dry. This
+    // restores the original treble while keeping the formant-preserved
+    // pitch shift on the harmonic body.
+    juce::dsp::LinkwitzRileyFilter<float> dryHighpass;   // extract dry highs from input
+    juce::dsp::LinkwitzRileyFilter<float> wetLowpass;    // remove duplicated highs from wet
+    std::vector<float> dryDelayBuffer;
+    int dryDelayWritePos = 0;
+    int dryDelayLength = 0;
+    float crossoverHz = 5000.0f;
 };
