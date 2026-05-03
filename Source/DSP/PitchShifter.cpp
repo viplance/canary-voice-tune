@@ -125,9 +125,9 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
         // when the shift itself dominates.
         float drySample = delayBuffer[writePos];
         float shiftAmount = std::abs(smoothedRatio - 1.0f);
-        // Full PSOLA at >=1 semitone shift (ratio ~1.06 / 0.94), full dry at
+        // Full PSOLA at >=~1.7 semitone shift (ratio ~1.10 / 0.90), full dry at
         // ratio=1, smooth crossfade between.
-        float wetMix = juce::jlimit(0.0f, 1.0f, shiftAmount / 0.06f);
+        float wetMix = juce::jlimit(0.0f, 1.0f, shiftAmount / 0.10f);
         float outSample = drySample * (1.0f - wetMix) + psolaSample * wetMix;
 
         channelData[i] = outSample;

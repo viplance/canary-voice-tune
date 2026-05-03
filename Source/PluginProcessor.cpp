@@ -31,15 +31,15 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 100.0f, 50.0f));
+      juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 100.0f, 80.0f));
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 1000.0f, 150.0f));
+      juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 1000.0f, 170.0f));
   // Range: 0% = no correction (bypass), 100% = full snap to nearest note
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"RANGE", 1}, "Range", 0.0f, 100.0f, 100.0f));
+      juce::ParameterID{"RANGE", 1}, "Range", 0.0f, 100.0f, 50.0f));
   // Remove Vibrato: 0% = keep natural pitch wobble, 100% = perfectly flat note
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"VIBRATO", 1}, "Remove Vibrato", 0.0f, 100.0f, 0.0f));
+      juce::ParameterID{"VIBRATO", 1}, "Remove Vibrato", 0.0f, 100.0f, 50.0f));
 
   // Keys 0-87 for A0 to C8. 1 means enabled, 0 means disabled.
   for (int i = 0; i < 88; ++i) {
@@ -127,7 +127,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     wasVoiced = isVoiced;
 
     const double sr = getSampleRate();
-    const int onsetGraceSamples = (int)(sr * 0.030); // 30ms
+    const int onsetGraceSamples = (int)(sr * 0.050); // 50ms
 
     if (isVoiced) {
       voicedSampleCount += buffer.getNumSamples();
@@ -137,25 +137,31 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
 
       // Smooth the pitch in the log (semitone) domain to remove vibrato.
-      // Vibrato is small (~±0.5 semitone) and fast (~5-7Hz). Real note changes
-      // are large (>=1 semitone) and should pass through without lag — so the
-      // lowpass is adaptive: strong inside the vibrato deadband, then it
-      // relaxes and finally snaps for big jumps (note transitions, octave
-      // leaps). Without this, a long time constant makes the tuner chase the
-      // previous note for hundreds of ms after a real pitch change.
+      // The lowpass time constant scales with the Remove Vibrato amount.
+      // We also apply an adaptive "snap" so that real note changes (octave
+      // leaps, melodic transitions) don't lag behind. The snap itself is
+      // disabled at 100% Remove Vibrato — at full strength the user wants a
+      // perfectly flat tone with no sudden ratio jumps, even if it costs a
+      // bit of latency on note changes. Without disabling the snap, slow
+      // pitch drift on a held note eventually trips the threshold and causes
+      // an audible "tuning jump".
       float blockDt = (float)buffer.getNumSamples() / (float)sr;
-      float vibTimeMs = 1.0f + vibratoRemoval * 250.0f; // 1ms .. 251ms
+      float vibTimeMs = 1.0f + vibratoRemoval * 200.0f; // 1ms .. 201ms
       if (smoothedMidi < 0.0f) {
         smoothedMidi = floatMidi;
       } else {
         float delta = std::abs(floatMidi - smoothedMidi);
-        // 0..0.6 semitone: full smoothing (vibrato).
-        // 0.6..1.5 semitone: smoothing relaxes linearly.
-        // >1.5 semitone: snap to new pitch (real note change).
+        // 0..0.5 semitone: full smoothing (vibrato range).
+        // 0.5..1.2 semitone: smoothing relaxes linearly.
+        // > 1.2 semitone: snap (real note change).
         float jumpFactor;
-        if (delta < 0.6f)      jumpFactor = 0.0f;
-        else if (delta > 1.5f) jumpFactor = 1.0f;
-        else                   jumpFactor = (delta - 0.6f) / 0.9f;
+        if (delta < 0.5f)      jumpFactor = 0.0f;
+        else if (delta > 1.2f) jumpFactor = 1.0f;
+        else                   jumpFactor = (delta - 0.5f) / 0.7f;
+
+        // Do NOT suppress jumpFactor by vibratoRemoval. We always want real
+        // note changes to snap through quickly — otherwise the smoother trails
+        // behind and the shifter chases the old note, causing a sweep/quack.
 
         float effectiveTimeMs = vibTimeMs * (1.0f - jumpFactor) + 1.0f * jumpFactor;
         float adaptiveAlpha = 1.0f - std::exp(-blockDt / (effectiveTimeMs / 1000.0f));
@@ -182,13 +188,15 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
         }
       }
 
-      // Hysteresis to prevent note jumping (duck effect)
+      // Hysteresis: stick to the current note unless the new note is clearly
+      // closer. This prevents rapid toggling when pitch sits near a semitone
+      // boundary, which is heard as a "quack" / "duck" effect.
       if (lastBestMidi >= 21 && lastBestMidi <= 108 && activeKeys[lastBestMidi - 21]) {
-          float distToLast = std::abs(effectiveMidi - lastBestMidi);
-          float distToNew = std::abs(effectiveMidi - bestMidi);
-          // Only switch if the new note is significantly closer (e.g., 0.8 semitones better)
-          // This creates a strong "magnet" effect to the current note to prevent wobble
-          if (distToLast < 1.0f && distToNew > distToLast - 0.4f) {
+          float distToLast = std::abs(effectiveMidi - (float)lastBestMidi);
+          float distToNew  = std::abs(effectiveMidi - (float)bestMidi);
+          // Stay on current note if we're within 0.7 semitones of it AND the
+          // new candidate isn't at least 0.35 semitones closer.
+          if (distToLast < 0.7f || (distToNew > distToLast - 0.35f && bestMidi != lastBestMidi)) {
               bestMidi = lastBestMidi;
           }
       }
@@ -203,10 +211,11 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       // across a bucket boundary, bestMidi jumps by a whole semitone — without
       // smoothing this becomes an instant ±1 semitone step in targetRatio,
       // which the shifter ramps over Attack ms and is heard as a "duck" /
-      // chirp on note transitions. A short ~12ms portamento makes the
-      // transition sound natural without lagging.
+      // chirp on note transitions. Portamento length grows with Remove Vibrato
+      // so that at full strength bucket transitions are stretched long enough
+      // to be inaudible.
       float blockDtMs = 1000.0f * (float)buffer.getNumSamples() / (float)sr;
-      float portamentoTimeMs = 12.0f;
+      float portamentoTimeMs = 15.0f; // Fixed short portamento — just enough to smooth bucket transitions
       float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
       if (smoothedTargetMidi < 0.0f) {
         smoothedTargetMidi = rawTargetMidi;
