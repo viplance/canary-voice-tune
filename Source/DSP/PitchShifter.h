@@ -1,7 +1,12 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <memory>
 #include <vector>
+
+namespace RubberBand {
+    class RubberBandStretcher;
+}
 
 class PitchShifter
 {
@@ -14,6 +19,8 @@ public:
     // Applies pitch shift directly to the buffer.
     void process(juce::AudioBuffer<float>& buffer);
 
+    int getLatencySamples() const { return currentLatency; }
+
     void setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz);
 
 private:
@@ -21,11 +28,16 @@ private:
     float currentRatio = 1.0f;
     float smoothedRatio = 1.0f;
     float targetRatio = 1.0f;
+    float appliedRatio = 1.0f;   // last value pushed to RubberBand
     float alpha = 0.01f;
-    float smoothedPeriod = 1000.0f;
-    
-    std::vector<float> delayBuffer;
-    int writePos = 0;
-    float phase = 0.0f;
-    int windowSize = 2048;
+    int currentLatency = 0;
+    float lastOutSample = 0.0f;  // for underrun hold-and-decay
+
+    std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
+
+    juce::AbstractFifo outputFifo { 131072 };
+    juce::AudioBuffer<float> outputBuffer { 1, 131072 };
+
+    std::vector<float> tempIn;
+    std::vector<float> tempOut;
 };

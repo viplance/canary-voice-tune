@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 
+include(FetchContent)
+FetchContent_Declare(
+  rubberband
+  GIT_REPOSITORY https://github.com/breakfastquay/rubberband.git
+  GIT_TAG default
+)
+FetchContent_MakeAvailable(rubberband)
+
 file(READ "package.json" PACKAGE_JSON)
 string(JSON PKG_VERSION GET "${PACKAGE_JSON}" "version")
 
@@ -39,6 +47,11 @@ target_sources(CanaryVoiceTune PRIVATE
     Source/DSP/PitchDetector.h
     Source/DSP/PitchShifter.cpp
     Source/DSP/PitchShifter.h
+    ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
+)
+
+target_include_directories(CanaryVoiceTune PRIVATE
+    ${rubberband_SOURCE_DIR}
 )
 
 # Generate JuceHeader.h — this creates the auto-generated header and adds
@@ -66,6 +79,7 @@ target_link_libraries(CanaryVoiceTune PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
+    "-framework Accelerate"
 )
 
 set_target_properties(CanaryVoiceTune PROPERTIES

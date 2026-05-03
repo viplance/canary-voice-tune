@@ -1,5 +1,7 @@
 #include "PitchShifter.h"
+#include <rubberband/RubberBandStretcher.h>
 #include <cmath>
+#include <algorithm>
 
 PitchShifter::PitchShifter() {}
 PitchShifter::~PitchShifter() {}
@@ -8,144 +10,163 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
 {
     juce::ignoreUnused(samplesPerBlock);
     currentSampleRate = sampleRate;
-    
-    // 25ms window to reduce latency and 'double voice'/chorus echo artifacts
-    windowSize = (int)(currentSampleRate * 0.025);
-    if (windowSize < 1) windowSize = 1;
-    
-    delayBuffer.clear();
-    delayBuffer.resize(windowSize * 4, 0.0f);
-    writePos = 0;
-    phase = 0.0f;
+
     currentRatio = 1.0f;
     smoothedRatio = 1.0f;
     targetRatio = 1.0f;
+    appliedRatio = 1.0f;
     alpha = 1.0f;
-    smoothedPeriod = (float)windowSize;
+
+    // R3 engine ("Finer") — explicitly designed by the RubberBand author
+    // for vocals and material with smooth, soft onsets and time-varying
+    // pitch shifts. It's substantially more CPU-intensive than R2 but the
+    // sound quality is in a different league for sustained vocal tones,
+    // and it's stable under continuous setPitchScale changes (the exact
+    // workload of auto-tune).
+    //
+    // Pairings inside R3:
+    //   - OptionPitchHighConsistency: required for time-varying pitch
+    //     without phase artefacts; works correctly across the 1.0 boundary.
+    //   - OptionFormantPreserved: preserves vocal formant envelope so
+    //     shifted vowels still sound like the same singer, not chipmunked.
+    //     R3 implements formant preservation via cepstral analysis, which
+    //     is much higher quality than R2's version (R2's formant code was
+    //     a click source — R3's is not).
+    //   - OptionWindowStandard: enables R3's full multi-resolution scheme
+    //     (different FFT sizes for different frequency bands) — the main
+    //     source of R3's quality advantage.
+    //   - OptionChannelsTogether: better mono compatibility (we sum to
+    //     mono after processing anyway, so this avoids stereo phase
+    //     issues).
+    RubberBand::RubberBandStretcher::Options options =
+        RubberBand::RubberBandStretcher::OptionProcessRealTime |
+        RubberBand::RubberBandStretcher::OptionEngineFiner |
+        RubberBand::RubberBandStretcher::OptionPitchHighConsistency |
+        RubberBand::RubberBandStretcher::OptionFormantPreserved |
+        RubberBand::RubberBandStretcher::OptionWindowStandard |
+        RubberBand::RubberBandStretcher::OptionChannelsTogether;
+
+    stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
+        (size_t)currentSampleRate, 1, options);
+    stretcher->setMaxProcessSize((size_t)samplesPerBlock);
+    stretcher->setPitchScale(1.0);
+
+    outputFifo.reset();
+    outputBuffer.clear();
+
+    // R3 has a larger and more variable buffering delay than R2 — give it
+    // generous headroom so we never starve the output FIFO. The slack here
+    // is what protects against any residual click on rapid pitch changes.
+    int delay = (int)stretcher->getStartDelay();
+    int slack = juce::jmax(16384, samplesPerBlock * 16);
+    int prefill = delay + slack;
+    currentLatency = prefill;
+
+    int start1, size1, start2, size2;
+    outputFifo.prepareToWrite(prefill, start1, size1, start2, size2);
+    if (size1 > 0) outputBuffer.clear(0, start1, size1);
+    if (size2 > 0) outputBuffer.clear(0, start2, size2);
+    outputFifo.finishedWrite(size1 + size2);
+
+    tempOut.resize(131072, 0.0f);
+    lastOutSample = 0.0f;
 }
 
 void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
 {
+    juce::ignoreUnused(detectedHz);
     currentRatio = ratio;
 
     float target = isVoiced ? currentRatio : 1.0f;
     float timeMs = isVoiced ? attackMs : releaseMs;
-    if (timeMs < 1.0f) timeMs = 1.0f; // min 1ms
+    if (timeMs < 1.0f) timeMs = 1.0f;
 
-    // lowpass alpha
     float timeS = timeMs / 1000.0f;
     alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
-
     targetRatio = target;
-
-    // Pitch synchronous period matching
-    // We target a period size. For unvoiced, fallback to 25ms.
-    float targetPeriod = currentSampleRate * 0.025f;
-    if (isVoiced && detectedHz > 40.0f) {
-        targetPeriod = currentSampleRate / detectedHz;
-    }
-
-    // Update target period, but we'll smooth it per-sample in process() to avoid clicks
-    // We reuse windowSize variable as the "targetPeriod"
-    windowSize = (int)targetPeriod;
 }
 
 void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 {
-    auto* channelData = buffer.getWritePointer(0);
+    if (stretcher == nullptr) return;
+
     int numSamples = buffer.getNumSamples();
-    int bufSize = (int)delayBuffer.size();
-    if (bufSize == 0) return;
+    auto* channelData = buffer.getWritePointer(0);
 
-    // 4-point Catmull-Rom interpolation. Linear interpolation rolls off high
-    // frequencies whenever the fractional position is near 0.5 — audible as a
-    // dull/muffled output. Cubic preserves treble.
-    auto cubicInterp = [&](float pos) {
-        int i1 = (int)pos;
-        float frac = pos - (float)i1;
-        int i0 = (i1 - 1 + bufSize) % bufSize;
-        int i2 = (i1 + 1) % bufSize;
-        int i3 = (i1 + 2) % bufSize;
-        float y0 = delayBuffer[i0];
-        float y1 = delayBuffer[i1];
-        float y2 = delayBuffer[i2];
-        float y3 = delayBuffer[i3];
-        float a = -0.5f * y0 + 1.5f * y1 - 1.5f * y2 + 0.5f * y3;
-        float b = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
-        float c = -0.5f * y0 + 0.5f * y2;
-        float d = y1;
-        return ((a * frac + b) * frac + c) * frac + d;
-    };
-
-    for (int i = 0; i < numSamples; ++i)
-    {
-        // Smooth ratio
+    // Compute average ratio across this block. We don't update RubberBand's
+    // pitch scale per-sample — that would tax the engine. We update once per
+    // block, but only when the change exceeds a small threshold, because each
+    // setPitchScale call inside the engine momentarily disturbs the OLA seam
+    // and that's an audible micro-click on every block.
+    float startRatio = smoothedRatio;
+    for (int i = 0; i < numSamples; ++i) {
         smoothedRatio += alpha * (targetRatio - smoothedRatio);
+    }
+    float blockRatio = (startRatio + smoothedRatio) * 0.5f;
+    if (blockRatio < 0.25f) blockRatio = 0.25f;
+    if (blockRatio > 4.0f)  blockRatio = 4.0f;
 
-        // Smooth period (200ms time constant to avoid sudden delay jumps)
-        float periodAlpha = 1.0f - std::exp(-1.0f / (0.2f * currentSampleRate));
-        smoothedPeriod += periodAlpha * ((float)windowSize - smoothedPeriod);
+    // R3 + HighConsistency handles continuous pitch changes cleanly, so
+    // we only filter out truly negligible deltas (< 1 cent) — enough to
+    // skip redundant engine work without losing pitch tracking precision.
+    float ratioDeltaCents = 1200.0f * std::abs(std::log2(blockRatio / appliedRatio));
+    if (ratioDeltaCents > 1.0f) {
+        stretcher->setPitchScale((double)blockRatio);
+        appliedRatio = blockRatio;
+    }
 
-        // Write to buffer
-        float inSample = channelData[i];
-        delayBuffer[writePos] = inSample;
+    // Push input samples into RubberBand
+    const float* inPtrs[1] = { channelData };
+    stretcher->process(inPtrs, (size_t)numSamples, false);
 
-        // Window size is exactly 2.0 * period. Spacing is 1.0 * period.
-        // This completely eliminates comb-filtering (choir effect) on vocals.
-        float currentWindowSize = 2.0f * smoothedPeriod;
+    // Drain everything RubberBand has ready into our output FIFO. Doing this
+    // greedily (rather than only when we need numSamples) keeps the FIFO
+    // well-stocked so we never underrun mid-block.
+    int avail = (int)stretcher->available();
+    if (avail > 0) {
+        int writable = outputFifo.getFreeSpace();
+        if (avail > writable) avail = writable;
+        if (avail > (int)tempOut.size()) avail = (int)tempOut.size();
+        if (avail > 0) {
+            float* outPtrs[1] = { tempOut.data() };
+            stretcher->retrieve(outPtrs, (size_t)avail);
 
-        // Read pointers
-        phase += (1.0f - smoothedRatio) / currentWindowSize;
-        if (phase >= 1.0f) phase -= 1.0f;
-        if (phase < 0.0f) phase += 1.0f;
-
-        float phase2 = phase + 0.5f;
-        if (phase2 >= 1.0f) phase2 -= 1.0f;
-
-        float readPos1 = (float)writePos - (phase * currentWindowSize);
-        if (readPos1 < 0) readPos1 += (float)bufSize;
-        float readPos2 = (float)writePos - (phase2 * currentWindowSize);
-        if (readPos2 < 0) readPos2 += (float)bufSize;
-
-        float val1 = cubicInterp(readPos1);
-        float val2 = cubicInterp(readPos2);
-        float win1 = std::sin(phase * juce::MathConstants<float>::pi);
-        float win2 = std::sin(phase2 * juce::MathConstants<float>::pi);
-        float norm = win1 + win2;
-        if (norm > 0.0001f) { win1 /= norm; win2 /= norm; }
-        float psolaSample = val1 * win1 + val2 * win2;
-
-        // Two cross-faded read pointers half a period apart inevitably produce
-        // a subtle chorus on transients (consonants, sibilants), regardless of
-        // window/normalization choice — it is fundamental to two-pointer PSOLA.
-        // To minimize the artifact, crossfade with the dry (delayed) signal
-        // proportionally to how little shift is actually needed. At ratio=1
-        // we hear pure dry; the further the ratio is from 1 the more PSOLA we
-        // mix in. Listeners can't tell the chorus apart from real shifting
-        // when the shift itself dominates.
-        //
-        // Curve: keep dry up to ~0.3 semitone shift (ratio ~1.0175), then
-        // ramp via a smoothstep so the audible "weight" of PSOLA grows softly
-        // and reaches full wet around ~1.7 semitones. Smoothstep avoids the
-        // linear-mix region where the dry signal still clearly partners the
-        // shifted one (which is exactly when chorus is most audible).
-        float drySample = delayBuffer[writePos];
-        float shiftAmount = std::abs(smoothedRatio - 1.0f);
-        const float dryEdge = 0.0175f; // ~0.3 semitone
-        const float wetEdge = 0.10f;   // ~1.7 semitone
-        float t = juce::jlimit(0.0f, 1.0f,
-                               (shiftAmount - dryEdge) / (wetEdge - dryEdge));
-        float wetMix = t * t * (3.0f - 2.0f * t); // smoothstep
-        float outSample = drySample * (1.0f - wetMix) + psolaSample * wetMix;
-
-        channelData[i] = outSample;
-
-        // If stereo, copy to right
-        if (buffer.getNumChannels() > 1) {
-            buffer.getWritePointer(1)[i] = outSample;
+            int start1, size1, start2, size2;
+            outputFifo.prepareToWrite(avail, start1, size1, start2, size2);
+            if (size1 > 0) outputBuffer.copyFrom(0, start1, tempOut.data(), size1);
+            if (size2 > 0) outputBuffer.copyFrom(0, start2, tempOut.data() + size1, size2);
+            outputFifo.finishedWrite(size1 + size2);
         }
+    }
 
-        writePos++;
-        if (writePos >= bufSize) writePos = 0;
+    // Read numSamples from the FIFO into the output buffer.
+    int ready = outputFifo.getNumReady();
+    int toRead = juce::jmin(numSamples, ready);
+    if (toRead > 0) {
+        int start1, size1, start2, size2;
+        outputFifo.prepareToRead(toRead, start1, size1, start2, size2);
+        if (size1 > 0) std::copy_n(outputBuffer.getReadPointer(0, start1), size1, channelData);
+        if (size2 > 0) std::copy_n(outputBuffer.getReadPointer(0, start2), size2, channelData + size1);
+        outputFifo.finishedRead(size1 + size2);
+        lastOutSample = channelData[toRead - 1];
+    }
+
+    // Underrun handling: if FIFO didn't have enough samples, hold the last
+    // good sample with a short decay rather than zero-padding (which would
+    // produce a very audible click). This is rare but happens around large
+    // pitch jumps where RubberBand temporarily produces less output than it
+    // consumes.
+    if (toRead < numSamples) {
+        float decay = 0.999f;
+        for (int i = toRead; i < numSamples; ++i) {
+            lastOutSample *= decay;
+            channelData[i] = lastOutSample;
+        }
+    }
+
+    // Mirror to right channel
+    if (buffer.getNumChannels() > 1) {
+        auto* rightData = buffer.getWritePointer(1);
+        std::copy_n(channelData, numSamples, rightData);
     }
 }

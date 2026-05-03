@@ -55,6 +55,7 @@ void CanaryVoiceTuneAudioProcessor::prepareToPlay(double sampleRate,
                                                        int samplesPerBlock) {
   pitchDetector.prepare(sampleRate, samplesPerBlock);
   pitchShifter.prepare(sampleRate, samplesPerBlock);
+  setLatencySamples(pitchShifter.getLatencySamples());
 }
 
 void CanaryVoiceTuneAudioProcessor::releaseResources() {}
