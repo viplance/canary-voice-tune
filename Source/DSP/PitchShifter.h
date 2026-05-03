@@ -121,4 +121,16 @@ private:
     int   onsetFadeDelay     = 0; // samples to wait before starting the fade
                                   // (== wet path latency, so the fade lands
                                   // exactly when the onset arrives at output)
+
+    // Lookahead delay between the live input the processor analyses
+    // (PitchDetector + ratio computation) and the input we actually feed
+    // into RubberBand. This gives the engine time to "see" the correct
+    // pitch ratio applied via setPitchScale BEFORE the audio for that pitch
+    // even reaches the stretcher — eliminating the start-of-phrase swoop
+    // that was audible at very low Attack values.
+    std::vector<float> lookaheadBuffer;
+    std::vector<float> lookaheadOut;     // scratch for delayed input
+    int lookaheadWritePos = 0;
+    int lookaheadSize = 0;
+    int lookaheadSamples_ = 0;
 };

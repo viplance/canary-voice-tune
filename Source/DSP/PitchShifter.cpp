@@ -60,7 +60,22 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     int delay = (int)stretcher->getStartDelay();
     int slack = juce::jmax(16384, samplesPerBlock * 16);
     int prefill = delay + slack;
-    currentLatency = prefill;
+
+    // Lookahead: delay the input samples on their way into RubberBand by
+    // ~25 ms so that, by the time a sample is consumed by the engine, the
+    // processor has already run the pitch detector on the *live* version of
+    // it and pushed the correct setPitchScale. The R3 engine therefore
+    // applies the right ratio from the very first sample of the phrase —
+    // no swoop, even at Attack = 0.1 ms.
+    lookaheadSamples_ = (int)(currentSampleRate * 0.025);
+    if (lookaheadSamples_ < 16) lookaheadSamples_ = 16;
+    lookaheadSize = lookaheadSamples_ + samplesPerBlock + 16;
+    lookaheadBuffer.assign((size_t)lookaheadSize, 0.0f);
+    lookaheadOut.assign((size_t)samplesPerBlock + 16, 0.0f);
+    lookaheadWritePos = 0;
+
+    // Total reported latency to the host = engine prefill + lookahead delay.
+    currentLatency = prefill + lookaheadSamples_;
 
     int start1, size1, start2, size2;
     outputFifo.prepareToWrite(prefill, start1, size1, start2, size2);
@@ -302,8 +317,22 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
         appliedRatio = blockRatio;
     }
 
-    // Push input samples into RubberBand
-    const float* inPtrs[1] = { channelData };
+    // Push input samples into RubberBand THROUGH the lookahead delay.
+    // For each sample: write current input to the delay line, then hand the
+    // engine the sample that was written `lookaheadSamples_` ago. The pitch
+    // scale we just pushed via setPitchScale() therefore takes effect on
+    // input that the live detector saw 25ms earlier — eliminating onset
+    // swoop because the engine is already locked when audio for the new
+    // note arrives.
+    if ((int)lookaheadOut.size() < numSamples) lookaheadOut.resize((size_t)numSamples * 2);
+    for (int i = 0; i < numSamples; ++i) {
+        lookaheadBuffer[(size_t)lookaheadWritePos] = channelData[i];
+        int readP = lookaheadWritePos - lookaheadSamples_;
+        if (readP < 0) readP += lookaheadSize;
+        lookaheadOut[(size_t)i] = lookaheadBuffer[(size_t)readP];
+        lookaheadWritePos = (lookaheadWritePos + 1) % lookaheadSize;
+    }
+    const float* inPtrs[1] = { lookaheadOut.data() };
     stretcher->process(inPtrs, (size_t)numSamples, false);
 
     // Drain everything RubberBand has ready into our output FIFO. Doing this

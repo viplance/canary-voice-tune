@@ -135,9 +135,15 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     // current pitch rather than ramping in from the old value.
     if (isVoiced && !wasVoiced) {
       lastBestMidi = -1;
+      lockedMidi = -1;
       smoothedMidi = -1.0f;
       smoothedTargetMidi = -1.0f;
       voicedSampleCount = 0;
+    }
+    if (!isVoiced) {
+      // Voicing ended — release the note lock so the next phrase can
+      // capture a new note.
+      lockedMidi = -1;
     }
     wasVoiced = isVoiced;
 
@@ -207,17 +213,27 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       // gates this whole block, but be defensive), pass the signal through.
       if (bestMidi < 0) bestMidi = (int)std::round(effectiveMidi);
 
-      // Hysteresis: stick to the current note unless the new note is clearly
-      // closer. This prevents rapid toggling when pitch sits near a semitone
-      // boundary, which is heard as a "quack" / "duck" effect.
-      if (lastBestMidi >= 21 && lastBestMidi <= 108 && activeKeys[lastBestMidi - 21]) {
-          float distToLast = std::abs(effectiveMidi - (float)lastBestMidi);
-          float distToNew  = std::abs(effectiveMidi - (float)bestMidi);
-          // Stay on current note if we're within 0.7 semitones of it AND the
-          // new candidate isn't at least 0.35 semitones closer.
-          if (distToLast < 0.7f || (distToNew > distToLast - 0.35f && bestMidi != lastBestMidi)) {
-              bestMidi = lastBestMidi;
-          }
+      // Note lock: the first stable bestMidi within a voiced segment is
+      // captured as `lockedMidi`. We hold it for the duration of the segment
+      // and never follow short glissando excursions back-to-the-note, which
+      // would otherwise be heard as a quack at the end of long sustained notes.
+      //
+      // Three zones, measured as |effectiveMidi - lockedMidi|:
+      //   < 1.0 semitone : tune toward lockedMidi as usual
+      //   1.0..2.0       : hold lockedMidi but smoothly bypass to dry
+      //                    proportionally to how far we've slid
+      //   > 2.0          : full bypass (dry signal — passes the glissando
+      //                    through unprocessed instead of forcing a wrong note)
+      // The lock is only released when voicing ends (consonant / silence).
+      if (lockedMidi < 0) {
+        lockedMidi = bestMidi;
+      }
+      bestMidi = lockedMidi; // never let the snap follow a glissando
+
+      float driftSemis = std::abs(effectiveMidi - (float)lockedMidi);
+      float lockBypass = 0.0f; // 0 = full tune, 1 = full dry
+      if (driftSemis > 1.0f) {
+        lockBypass = juce::jlimit(0.0f, 1.0f, (driftSemis - 1.0f) / 1.0f);
       }
       lastBestMidi = bestMidi;
 
@@ -225,6 +241,11 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       // Keep (1 - strength) of the original deviation from the note.
       float remainingDiff = diff * (1.0f - correctionStrength);
       float rawTargetMidi = bestMidi + remainingDiff;
+      // Apply lock-bypass: blend rawTargetMidi toward effectiveMidi (=>
+      // ratio toward 1.0) so the listener hears the glissando dry rather
+      // than a forced/quacking pitch.
+      rawTargetMidi = rawTargetMidi * (1.0f - lockBypass)
+                    + effectiveMidi * lockBypass;
 
       // Smooth the *target* note in the log domain. When the input glides
       // across a bucket boundary, bestMidi jumps by a whole semitone — without

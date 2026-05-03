@@ -58,6 +58,7 @@ private:
   std::atomic<float> *popParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
   int lastBestMidi = -1;
+  int lockedMidi = -1;        // captured note for the current voiced segment
   bool wasVoiced = false;
   float smoothedMidi = -1.0f;
   float smoothedTargetMidi = -1.0f;
