@@ -37,6 +37,16 @@ public:
   juce::AudioProcessorValueTreeState apvts;
   std::atomic<float> currentDetectedPitch{0.0f};
 
+  // Lock-free note-change history so the UI can see every distinct note that
+  // played between two timer callbacks (a 60Hz timer can skip notes shorter
+  // than ~16 ms otherwise). Audio thread pushes whenever the chosen midi
+  // note changes; UI thread drains the ring on each tick.
+  static constexpr int kNoteHistorySize = 32;
+  std::atomic<int> noteHistory[kNoteHistorySize] = {};
+  std::atomic<int> noteHistoryWriteIdx { 0 };
+  int noteHistoryReadIdx = 0;          // UI-thread only
+  std::atomic<int> lastPushedNote { -1 }; // audio-thread only writer
+
   float getPopActivity() const { return pitchShifter.getPopActivity(); }
 
   void playPreviewTone(float freq);
@@ -61,6 +71,8 @@ private:
   std::vector<float> monoMix; // scratch for stereo->mono pitch detection
   int lastBestMidi = -1;
   int lockedMidi = -1;        // captured note for the current voiced segment
+  int lockEngageSamples = 0;  // samples since lockedMidi was set (for fade-in)
+  int lockReleaseSamples = 0; // samples spent far from lockedMidi (for relock)
   bool wasVoiced = false;
   float smoothedMidi = -1.0f;
   float smoothedTargetMidi = -1.0f;

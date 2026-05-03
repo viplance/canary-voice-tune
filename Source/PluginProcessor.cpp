@@ -121,9 +121,13 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   }
 
   if (totalNumInputChannels > 0) {
-    // Pitch detection on a mono-summed view of the input. For stereo (or
-    // panned) signals this gives a single coherent pitch trajectory rather
-    // than locking only to the left channel.
+    // Build a pitch-detection signal from the input. We can't simply average
+    // L and R: anti-phase or near-anti-phase stereo (some stereo wideners,
+    // Haas-style spreads) would cancel to silence and the detector would
+    // fall unvoiced even though the user clearly hears the singer. Instead,
+    // pick whichever channel has more energy in this block — for a normal
+    // panned vocal that's the side it's panned to; for in-phase stereo it
+    // doesn't matter; for anti-phase stereo we still get a good signal.
     int n = buffer.getNumSamples();
     monoMix.resize((size_t)n);
     if (totalNumInputChannels == 1) {
@@ -131,7 +135,10 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     } else {
       const float* l = buffer.getReadPointer(0);
       const float* r = buffer.getReadPointer(1);
-      for (int i = 0; i < n; ++i) monoMix[(size_t)i] = 0.5f * (l[i] + r[i]);
+      double eL = 0.0, eR = 0.0;
+      for (int i = 0; i < n; ++i) { eL += l[i]*l[i]; eR += r[i]*r[i]; }
+      const float* src = (eL >= eR) ? l : r;
+      std::copy_n(src, n, monoMix.data());
     }
     float detectedHz = pitchDetector.process(monoMix.data(), n);
 
@@ -146,6 +153,8 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     if (isVoiced && !wasVoiced) {
       lastBestMidi = -1;
       lockedMidi = -1;
+      lockEngageSamples = 0;
+      lockReleaseSamples = 0;
       smoothedMidi = -1.0f;
       smoothedTargetMidi = -1.0f;
       voicedSampleCount = 0;
@@ -154,6 +163,8 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       // Voicing ended — release the note lock so the next phrase can
       // capture a new note.
       lockedMidi = -1;
+      lockEngageSamples = 0;
+      lockReleaseSamples = 0;
     }
     wasVoiced = isVoiced;
 
@@ -235,24 +246,52 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       }
       if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
 
-      // Note lock with three drift zones (see prior commit), but acquired
-      // only after the grace window so the captured note isn't a detector
-      // glitch. Released only on voicing end (consonant / silence).
+      // Note lock — captures the first stable bestMidi within a voiced
+      // segment, so short glissando excursions don't drag the tune.
+      // BUT: in a connected melody (no consonants between notes), the
+      // singer simply moves to a different note while still voiced. To
+      // distinguish "short pitch wobble" from "moved to a new note", we
+      // count consecutive samples spent far (>1.5 semitones) from the
+      // locked note. If that exceeds ~120 ms — clearly a real note change —
+      // we release and re-lock to whatever active key is closest now. This
+      // makes the keyboard follow the melody, not just the first note.
       if (lockReady && lockedMidi < 0) {
         lockedMidi = bestMidi;
+        lockEngageSamples = 0;
+        lockReleaseSamples = 0;
       }
 
-      float lockBypass = 0.0f; // 0 = full tune, 1 = full dry
+      if (lockedMidi >= 0) {
+        lockEngageSamples += buffer.getNumSamples();
+        float driftFromLock = std::abs(effectiveMidi - (float)lockedMidi);
+        if (driftFromLock > 1.5f) {
+          lockReleaseSamples += buffer.getNumSamples();
+          float ms = 1000.0f * (float)lockReleaseSamples / (float)sr;
+          if (ms > 120.0f) {
+            // Sustained move to a new note — re-lock onto the new closest
+            // active key (computed above as bestMidi).
+            lockedMidi = bestMidi;
+            lockEngageSamples = 0;
+            lockReleaseSamples = 0;
+          }
+        } else {
+          lockReleaseSamples = 0; // back near the locked note
+        }
+      }
+
+      // Lock-engage fade: smooth the bypass-to-tune transition over the
+      // user's Attack window so a small Attack value doesn't quack.
+      float lockEngageMs = 1000.0f * (float)lockEngageSamples / (float)sr;
+      float engageFade = juce::jlimit(0.0f, 1.0f, lockEngageMs / attackMs);
+
+      float lockBypass = 1.0f;
       if (lockedMidi >= 0) {
         bestMidi = lockedMidi;
         float driftSemis = std::abs(effectiveMidi - (float)lockedMidi);
-        if (driftSemis > 1.0f) {
-          lockBypass = juce::jlimit(0.0f, 1.0f, (driftSemis - 1.0f) / 1.0f);
-        }
-      } else {
-        // Still in grace — bypass to dry until we lock. This avoids any
-        // wrong-note output at the start of the phrase.
-        lockBypass = 1.0f;
+        float driftBypass = (driftSemis > 1.0f)
+            ? juce::jlimit(0.0f, 1.0f, (driftSemis - 1.0f) / 1.0f)
+            : 0.0f;
+        lockBypass = juce::jmax(driftBypass, 1.0f - engageFade);
       }
       lastBestMidi = bestMidi;
 
@@ -285,13 +324,11 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       if (targetRatio < 0.5f)
         targetRatio = 0.5f;
 
-      // Onset grace: hold ratio at 1.0 for the first ~50 ms of voicing so the
-      // pitch detector has time to lock and we don't shift on the first jittery
-      // estimate (octave error, sub-pulse noise) which is the main source of
-      // a "swoop"/quack at word starts.
-      if (voicedSampleCount < onsetGraceSamples) {
-        targetRatio = 1.0f;
-      }
+      // (Old onset grace removed: lock-engage fade now does the same job
+      // smoothly — the lockBypass starts at 1.0 in grace and fades to 0
+      // across the Attack window after lockedMidi is acquired. The hard
+      // cutoff "ratio = 1.0 for first 50ms" caused a step at exactly 50ms
+      // which the shifter at low Attack reproduced as a quack.)
 
       actualOutputHz = 440.0f * std::pow(2.0f, (bestMidi - 69.0f) / 12.0f);
     }
@@ -300,6 +337,22 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       currentDetectedPitch.store(actualOutputHz);
     else
       currentDetectedPitch.store(0.0f);
+
+    // Push every note CHANGE into the lock-free ring so the UI never misses
+    // a note even if several go by between timer callbacks.
+    int currentNote = -1;
+    if (isVoiced && actualOutputHz > 0.0f) {
+      int midi = (int)std::round(69.0f + 12.0f * std::log2(actualOutputHz / 440.0f));
+      if (midi >= 21 && midi <= 108) currentNote = midi - 21;
+    }
+    int prev = lastPushedNote.load(std::memory_order_relaxed);
+    if (currentNote != prev) {
+      lastPushedNote.store(currentNote, std::memory_order_relaxed);
+      int w = noteHistoryWriteIdx.load(std::memory_order_relaxed);
+      noteHistory[w].store(currentNote, std::memory_order_release);
+      noteHistoryWriteIdx.store((w + 1) % kNoteHistorySize,
+                                std::memory_order_release);
+    }
 
     pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced, detectedHz);
     float sibilantsDb = sibilantsParam ? sibilantsParam->load() : 0.0f;

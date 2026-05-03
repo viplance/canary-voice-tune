@@ -46,7 +46,11 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   addAndMakeVisible(pianoKeyboard);
 
   setSize(1280, 350);
-  startTimerHz(30); // 30 FPS for visual updates
+  // Higher refresh so short notes (30–80 ms) aren't missed between UI ticks
+  // — the audio thread can change `currentDetectedPitch` many times per
+  // 33 ms frame and we only ever read the latest, so a coarse timer can
+  // visually skip notes in fast melodic passages.
+  startTimerHz(60);
 
   pianoKeyboard.onKeyClicked = [this](float freq) {
     audioProcessor.playPreviewTone(freq);
@@ -121,9 +125,31 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
 }
 
 void CanaryVoiceTuneAudioProcessorEditor::timerCallback() {
-  float pitch = audioProcessor.currentDetectedPitch.load();
-  if (pianoKeyboard.updateDetectedPitch(pitch)) {
-    pianoKeyboard.repaint();
+  // Drain the audio thread's note-change ring. We highlight the LATEST note
+  // (so the keyboard always reflects what's playing right now), but by
+  // walking the ring we make sure that even if multiple distinct notes were
+  // pushed between two ticks, the UI saw them all (matters in case anything
+  // downstream cares — repaint is cheap and idempotent).
+  int writeIdx = audioProcessor.noteHistoryWriteIdx.load(std::memory_order_acquire);
+  int latestNote = -2; // sentinel
+  while (audioProcessor.noteHistoryReadIdx != writeIdx) {
+    latestNote = audioProcessor.noteHistory[audioProcessor.noteHistoryReadIdx]
+                     .load(std::memory_order_acquire);
+    audioProcessor.noteHistoryReadIdx =
+        (audioProcessor.noteHistoryReadIdx + 1) %
+        CanaryVoiceTuneAudioProcessor::kNoteHistorySize;
+  }
+  if (latestNote != -2) {
+    // -1 means "no voiced note now" — pass 0 Hz so the keyboard clears.
+    // NB: cast to float, otherwise the (latestNote + 21 - 69) / 12 division
+    // is integer and rounds to whole octaves — every note within an octave
+    // would otherwise be reported as the same A.
+    float hz = (latestNote >= 0)
+                   ? 440.0f * std::pow(2.0f, (float)((latestNote + 21) - 69) / 12.0f)
+                   : 0.0f;
+    if (pianoKeyboard.updateDetectedPitch(hz)) {
+      pianoKeyboard.repaint();
+    }
   }
 
   // Pop Filter lamp: smoothly interpolate UI intensity toward the actual
