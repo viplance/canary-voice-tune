@@ -123,11 +123,19 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
         // we hear pure dry; the further the ratio is from 1 the more PSOLA we
         // mix in. Listeners can't tell the chorus apart from real shifting
         // when the shift itself dominates.
+        //
+        // Curve: keep dry up to ~0.3 semitone shift (ratio ~1.0175), then
+        // ramp via a smoothstep so the audible "weight" of PSOLA grows softly
+        // and reaches full wet around ~1.7 semitones. Smoothstep avoids the
+        // linear-mix region where the dry signal still clearly partners the
+        // shifted one (which is exactly when chorus is most audible).
         float drySample = delayBuffer[writePos];
         float shiftAmount = std::abs(smoothedRatio - 1.0f);
-        // Full PSOLA at >=~1.7 semitone shift (ratio ~1.10 / 0.90), full dry at
-        // ratio=1, smooth crossfade between.
-        float wetMix = juce::jlimit(0.0f, 1.0f, shiftAmount / 0.10f);
+        const float dryEdge = 0.0175f; // ~0.3 semitone
+        const float wetEdge = 0.10f;   // ~1.7 semitone
+        float t = juce::jlimit(0.0f, 1.0f,
+                               (shiftAmount - dryEdge) / (wetEdge - dryEdge));
+        float wetMix = t * t * (3.0f - 2.0f * t); // smoothstep
         float outSample = drySample * (1.0f - wetMix) + psolaSample * wetMix;
 
         channelData[i] = outSample;

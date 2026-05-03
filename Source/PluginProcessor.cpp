@@ -211,11 +211,10 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       // across a bucket boundary, bestMidi jumps by a whole semitone — without
       // smoothing this becomes an instant ±1 semitone step in targetRatio,
       // which the shifter ramps over Attack ms and is heard as a "duck" /
-      // chirp on note transitions. Portamento length grows with Remove Vibrato
-      // so that at full strength bucket transitions are stretched long enough
-      // to be inaudible.
+      // chirp on note transitions. A short fixed portamento smooths bucket
+      // crossings without adding noticeable lag.
       float blockDtMs = 1000.0f * (float)buffer.getNumSamples() / (float)sr;
-      float portamentoTimeMs = 15.0f; // Fixed short portamento — just enough to smooth bucket transitions
+      float portamentoTimeMs = 15.0f;
       float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
       if (smoothedTargetMidi < 0.0f) {
         smoothedTargetMidi = rawTargetMidi;
