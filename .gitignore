@@ -1,0 +1,26 @@
+# Project Builds
+build/
+vendor/
+bin/
+JUCELibraryCode/
+JuceLibraryCode/
+*.jucer
+
+# IDEs
+.idea/
+.vscode/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Dependencies
+node_modules/
