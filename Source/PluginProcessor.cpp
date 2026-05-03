@@ -198,52 +198,57 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       // slightly above the input would always resolve down (because of
       // the iteration order), even when the real pitch is closer to the
       // first active note above the gap.
+      // Lock acquisition grace window. The very first detected pitches at
+      // the start of a voiced segment are unreliable — the YIN detector
+      // can drop an octave error or a sub-pulse glitch on the first 5–30ms.
+      // We wait this grace before locking the note, so that smoothedMidi
+      // has converged to a stable weighted average. While waiting, the
+      // shifter passes the signal through (ratio = 1.0).
+      const int lockGraceSamples = (int)(sr * 0.050); // 50 ms
+      bool lockReady = (voicedSampleCount >= lockGraceSamples);
+
+      // Choose the active key closest to the *smoothed* pitch (smoothedMidi)
+      // when locking — this is the weighted-average pitch of the first
+      // ~50ms, which is much more reliable than the instantaneous
+      // (potentially octave-erroneous) first detection.
+      float lockPitch = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
       int bestMidi = -1;
       float minDist = 1e9f;
       for (int testMidi = 21; testMidi <= 108; ++testMidi) {
         int keyIndex = testMidi - 21;
         if (! activeKeys[keyIndex]) continue;
-        float d = std::abs(effectiveMidi - (float)testMidi);
+        float d = std::abs(lockPitch - (float)testMidi);
         if (d < minDist) {
           minDist = d;
           bestMidi = testMidi;
         }
       }
-      // Fallback: if no active keys (shouldn't happen because anyKeyActive
-      // gates this whole block, but be defensive), pass the signal through.
-      if (bestMidi < 0) bestMidi = (int)std::round(effectiveMidi);
+      if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
 
-      // Note lock: the first stable bestMidi within a voiced segment is
-      // captured as `lockedMidi`. We hold it for the duration of the segment
-      // and never follow short glissando excursions back-to-the-note, which
-      // would otherwise be heard as a quack at the end of long sustained notes.
-      //
-      // Three zones, measured as |effectiveMidi - lockedMidi|:
-      //   < 1.0 semitone : tune toward lockedMidi as usual
-      //   1.0..2.0       : hold lockedMidi but smoothly bypass to dry
-      //                    proportionally to how far we've slid
-      //   > 2.0          : full bypass (dry signal — passes the glissando
-      //                    through unprocessed instead of forcing a wrong note)
-      // The lock is only released when voicing ends (consonant / silence).
-      if (lockedMidi < 0) {
+      // Note lock with three drift zones (see prior commit), but acquired
+      // only after the grace window so the captured note isn't a detector
+      // glitch. Released only on voicing end (consonant / silence).
+      if (lockReady && lockedMidi < 0) {
         lockedMidi = bestMidi;
       }
-      bestMidi = lockedMidi; // never let the snap follow a glissando
 
-      float driftSemis = std::abs(effectiveMidi - (float)lockedMidi);
       float lockBypass = 0.0f; // 0 = full tune, 1 = full dry
-      if (driftSemis > 1.0f) {
-        lockBypass = juce::jlimit(0.0f, 1.0f, (driftSemis - 1.0f) / 1.0f);
+      if (lockedMidi >= 0) {
+        bestMidi = lockedMidi;
+        float driftSemis = std::abs(effectiveMidi - (float)lockedMidi);
+        if (driftSemis > 1.0f) {
+          lockBypass = juce::jlimit(0.0f, 1.0f, (driftSemis - 1.0f) / 1.0f);
+        }
+      } else {
+        // Still in grace — bypass to dry until we lock. This avoids any
+        // wrong-note output at the start of the phrase.
+        lockBypass = 1.0f;
       }
       lastBestMidi = bestMidi;
 
       float diff = effectiveMidi - bestMidi;
-      // Keep (1 - strength) of the original deviation from the note.
       float remainingDiff = diff * (1.0f - correctionStrength);
       float rawTargetMidi = bestMidi + remainingDiff;
-      // Apply lock-bypass: blend rawTargetMidi toward effectiveMidi (=>
-      // ratio toward 1.0) so the listener hears the glissando dry rather
-      // than a forced/quacking pitch.
       rawTargetMidi = rawTargetMidi * (1.0f - lockBypass)
                     + effectiveMidi * lockBypass;
 
