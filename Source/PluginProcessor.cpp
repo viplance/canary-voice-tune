@@ -185,23 +185,27 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       float effectiveMidi = smoothedMidi * vibratoRemoval
                           + floatMidi * (1.0f - vibratoRemoval);
 
-      int nearestMidi = (int)std::round(effectiveMidi);
-
-      int bestMidi = nearestMidi;
-      int minDistance = 100;
-
-      for (int dx = -88; dx <= 88; ++dx) {
-        int testMidi = nearestMidi + dx;
-        if (testMidi < 21 || testMidi > 108)
-          continue;
+      // Find the active key whose pitch is closest to effectiveMidi in
+      // fractional semitones. Measuring against the floating-point pitch
+      // (not the rounded nearestMidi) is essential when whole regions of
+      // the keyboard are disabled — otherwise an octave-wide gap centered
+      // slightly above the input would always resolve down (because of
+      // the iteration order), even when the real pitch is closer to the
+      // first active note above the gap.
+      int bestMidi = -1;
+      float minDist = 1e9f;
+      for (int testMidi = 21; testMidi <= 108; ++testMidi) {
         int keyIndex = testMidi - 21;
-        if (activeKeys[keyIndex]) {
-          if (std::abs(dx) < minDistance) {
-            minDistance = std::abs(dx);
-            bestMidi = testMidi;
-          }
+        if (! activeKeys[keyIndex]) continue;
+        float d = std::abs(effectiveMidi - (float)testMidi);
+        if (d < minDist) {
+          minDist = d;
+          bestMidi = testMidi;
         }
       }
+      // Fallback: if no active keys (shouldn't happen because anyKeyActive
+      // gates this whole block, but be defensive), pass the signal through.
+      if (bestMidi < 0) bestMidi = (int)std::round(effectiveMidi);
 
       // Hysteresis: stick to the current note unless the new note is clearly
       // closer. This prevents rapid toggling when pitch sits near a semitone
