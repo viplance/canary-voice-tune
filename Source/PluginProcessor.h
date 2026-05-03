@@ -3,6 +3,7 @@
 #include "DSP/PitchDetector.h"
 #include "DSP/PitchShifter.h"
 #include <JuceHeader.h>
+#include <vector>
 
 class CanaryVoiceTuneAudioProcessor : public juce::AudioProcessor {
 public:
@@ -57,6 +58,7 @@ private:
   std::atomic<float> *breathParam = nullptr;
   std::atomic<float> *popParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
+  std::vector<float> monoMix; // scratch for stereo->mono pitch detection
   int lastBestMidi = -1;
   int lockedMidi = -1;        // captured note for the current voiced segment
   bool wasVoiced = false;

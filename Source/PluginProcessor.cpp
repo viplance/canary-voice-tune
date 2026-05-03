@@ -121,9 +121,19 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   }
 
   if (totalNumInputChannels > 0) {
-    auto *channelData = buffer.getReadPointer(0);
-    float detectedHz =
-        pitchDetector.process(channelData, buffer.getNumSamples());
+    // Pitch detection on a mono-summed view of the input. For stereo (or
+    // panned) signals this gives a single coherent pitch trajectory rather
+    // than locking only to the left channel.
+    int n = buffer.getNumSamples();
+    monoMix.resize((size_t)n);
+    if (totalNumInputChannels == 1) {
+      std::copy_n(buffer.getReadPointer(0), n, monoMix.data());
+    } else {
+      const float* l = buffer.getReadPointer(0);
+      const float* r = buffer.getReadPointer(1);
+      for (int i = 0; i < n; ++i) monoMix[(size_t)i] = 0.5f * (l[i] + r[i]);
+    }
+    float detectedHz = pitchDetector.process(monoMix.data(), n);
 
     bool isVoiced = (detectedHz > 0.0f);
     float actualOutputHz = detectedHz;
