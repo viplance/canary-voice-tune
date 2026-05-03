@@ -27,6 +27,15 @@ public:
     // Breath: bell gain (dB) around 3 kHz, controls breathiness/air.
     void setToneShaping(float sibilantsDb, float breathDb);
 
+    // Pop filter: trigger threshold (dB) for the plosive detector. 0 dB
+    // disables the filter; values down to -24 dB make it trigger on
+    // progressively quieter plosives.
+    void setPopFilter(float thresholdDb);
+
+    // Returns 0..1 = current pop-ducking activity, for UI lamp display.
+    // 1 = fully ducking right now, 0 = idle.
+    float getPopActivity() const { return popActivity; }
+
 private:
     double currentSampleRate = 44100.0;
     float currentRatio = 1.0f;
@@ -68,4 +77,31 @@ private:
     static constexpr float kSibilantsHz = 7000.0f;
     static constexpr float kBreathHz    = 3000.0f;
     static constexpr float kBreathQ     = 0.9f;
+
+    // Adaptive pop filter (input-side, runs before RubberBand):
+    //   - Splits the input via Linkwitz-Riley LR4 at ~150 Hz into bass and
+    //     non-bass bands.
+    //   - Runs a transient detector on the bass band: a fast envelope follower
+    //     compared against a slow baseline. A sharp ratio spike => plosive.
+    //   - Smoothly ducks the bass band's gain when a plosive is detected,
+    //     then restores it. Only the bass band is touched, so the body of
+    //     the voice is unaffected.
+    juce::dsp::LinkwitzRileyFilter<float> popLow;
+    juce::dsp::LinkwitzRileyFilter<float> popHigh;
+    float popThresholdDb = 0.0f;    // user setting; 0 dB = bypass
+    float popFastEnv    = 0.0f;     // fast peak envelope of bass band
+    float popSlowEnv    = 0.0f;     // slow baseline envelope of bass band
+    float popGain       = 1.0f;     // current bass-band gain (1.0 = no duck)
+    float popFastAlpha  = 0.0f;     // computed in prepare
+    float popSlowAlpha  = 0.0f;
+    float popAttackAlpha  = 0.0f;
+    float popReleaseAlpha = 0.0f;
+    std::atomic<float> popActivity { 0.0f }; // 0..1 for UI lamp
+    static constexpr float kPopCrossoverHz = 150.0f;
+    // When triggered, bass band is ducked by this many dB regardless of
+    // user setting — the user setting controls *how readily* the filter
+    // triggers (threshold), not how deep it ducks.
+    static constexpr float kPopDuckDb = -12.0f;
+    std::vector<float> popBassTemp;
+    std::vector<float> popHighTemp;
 };

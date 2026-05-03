@@ -36,6 +36,8 @@ public:
   juce::AudioProcessorValueTreeState apvts;
   std::atomic<float> currentDetectedPitch{0.0f};
 
+  float getPopActivity() const { return pitchShifter.getPopActivity(); }
+
   void playPreviewTone(float freq);
   std::atomic<float> previewFrequencyHz{0.0f};
   std::atomic<int> previewSamplesRemaining{0};
@@ -53,6 +55,7 @@ private:
   std::atomic<float> *vibratoParam = nullptr;
   std::atomic<float> *sibilantsParam = nullptr;
   std::atomic<float> *breathParam = nullptr;
+  std::atomic<float> *popParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
   int lastBestMidi = -1;
   bool wasVoiced = false;

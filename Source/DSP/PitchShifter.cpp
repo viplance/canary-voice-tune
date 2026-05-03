@@ -98,6 +98,32 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     currentBreathDb    = 9999.0f;
     setToneShaping(0.0f, 0.0f);
 
+    // Pop filter crossover at 150 Hz (LR4, perfect-recombination sum).
+    popLow.prepare(spec);
+    popHigh.prepare(spec);
+    popLow.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+    popHigh.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
+    popLow.setCutoffFrequency(kPopCrossoverHz);
+    popHigh.setCutoffFrequency(kPopCrossoverHz);
+    popLow.reset();
+    popHigh.reset();
+    // Envelope time constants (one-pole):
+    //   fast:    ~3 ms  -> tracks single-pulse plosive energy
+    //   slow:   ~150 ms -> baseline of the program material
+    //   attack: ~5 ms   -> how fast we duck when a pop is detected
+    //   release:~80 ms  -> how fast we restore after the pop has passed
+    popFastAlpha    = 1.0f - std::exp(-1.0f / (0.003f * (float)currentSampleRate));
+    popSlowAlpha    = 1.0f - std::exp(-1.0f / (0.150f * (float)currentSampleRate));
+    popAttackAlpha  = 1.0f - std::exp(-1.0f / (0.005f * (float)currentSampleRate));
+    popReleaseAlpha = 1.0f - std::exp(-1.0f / (0.080f * (float)currentSampleRate));
+    popFastEnv = 0.0f;
+    popSlowEnv = 0.0f;
+    popGain    = 1.0f;
+    popThresholdDb = 0.0f;
+    popActivity.store(0.0f);
+    popBassTemp.assign((size_t)samplesPerBlock + 16, 0.0f);
+    popHighTemp.assign((size_t)samplesPerBlock + 16, 0.0f);
+
     // Dry delay must equal the wet path's total latency so that the high
     // band realigns with the shifted low/mid band when summed.
     dryDelayLength = currentLatency;
@@ -129,6 +155,13 @@ void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
     }
 }
 
+void PitchShifter::setPopFilter(float thresholdDb)
+{
+    if (thresholdDb > 0.0f)   thresholdDb = 0.0f;
+    if (thresholdDb < -36.0f) thresholdDb = -36.0f;
+    popThresholdDb = thresholdDb;
+}
+
 void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
 {
     juce::ignoreUnused(detectedHz);
@@ -149,6 +182,71 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 
     int numSamples = buffer.getNumSamples();
     auto* channelData = buffer.getWritePointer(0);
+
+    // 0) Adaptive pop filter (input pre-processing).
+    //
+    //    Splits input into bass/non-bass via 150 Hz LR4, runs a transient
+    //    detector on the bass band, and ducks the bass band when a plosive
+    //    is detected. The user's threshold knob controls how readily the
+    //    detector fires (lower threshold => triggers on quieter plosives);
+    //    the duck depth itself is fixed at -12 dB, applied with a smooth
+    //    envelope. 0 dB threshold disables the filter entirely.
+    if (popThresholdDb < -0.01f) {
+        if ((int)popBassTemp.size() < numSamples) {
+            popBassTemp.assign((size_t)numSamples + 16, 0.0f);
+            popHighTemp.assign((size_t)numSamples + 16, 0.0f);
+        }
+        std::copy_n(channelData, numSamples, popBassTemp.data());
+        std::copy_n(channelData, numSamples, popHighTemp.data());
+        {
+            float* bassPtr = popBassTemp.data();
+            float* highPtr = popHighTemp.data();
+            juce::dsp::AudioBlock<float> bassBlock(&bassPtr, 1, (size_t)numSamples);
+            juce::dsp::AudioBlock<float> highBlock(&highPtr, 1, (size_t)numSamples);
+            juce::dsp::ProcessContextReplacing<float> bassCtx(bassBlock);
+            juce::dsp::ProcessContextReplacing<float> highCtx(highBlock);
+            popLow.process(bassCtx);
+            popHigh.process(highCtx);
+        }
+        // Linear threshold derived from the user's dB setting. With knob at
+        // 0 dB this branch isn't entered; at -24 dB threshold ≈ 0.063, so
+        // any bass spike above ~-24 dBFS will trigger ducking.
+        float threshLin   = std::pow(10.0f, popThresholdDb / 20.0f);
+        float duckGainLin = std::pow(10.0f, kPopDuckDb     / 20.0f);
+
+        for (int i = 0; i < numSamples; ++i) {
+            float bass = popBassTemp[(size_t)i];
+            float r = std::abs(bass);
+            popFastEnv += popFastAlpha * (r - popFastEnv);
+            popSlowEnv += popSlowAlpha * (r - popSlowEnv);
+            // Trigger when fast envelope exceeds threshold AND is well above
+            // slow baseline (=> it's a transient, not sustained low-frequency
+            // singing). The 2x multiplier on baseline avoids triggering on a
+            // simple level rise.
+            bool trigger = (popFastEnv > threshLin)
+                        && (popFastEnv > popSlowEnv * 2.0f);
+            float targetGain = trigger ? duckGainLin : 1.0f;
+            float a = (targetGain < popGain) ? popAttackAlpha : popReleaseAlpha;
+            popGain += a * (targetGain - popGain);
+            popBassTemp[(size_t)i] = bass * popGain;
+        }
+        for (int i = 0; i < numSamples; ++i) {
+            channelData[i] = popBassTemp[(size_t)i] + popHighTemp[(size_t)i];
+        }
+
+        // Activity for UI lamp: 0 when popGain == 1 (idle), 1 when fully
+        // ducked. Linear in dB-domain mapping is closer to perception of
+        // "how much is happening" than linear amplitude.
+        float activity = juce::jlimit(0.0f, 1.0f,
+                                      (1.0f - popGain) / (1.0f - duckGainLin));
+        popActivity.store(activity);
+    } else {
+        popFastEnv = popSlowEnv = 0.0f;
+        popGain = 1.0f;
+        popLow.reset();
+        popHigh.reset();
+        popActivity.store(0.0f);
+    }
 
     // 1) Stash dry input into the delay line and pre-extract its
     //    high-frequency component. The high-band needs to come out exactly

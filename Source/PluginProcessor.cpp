@@ -21,6 +21,7 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
   vibratoParam = apvts.getRawParameterValue("VIBRATO");
   sibilantsParam = apvts.getRawParameterValue("SIBILANTS");
   breathParam = apvts.getRawParameterValue("BREATH");
+  popParam = apvts.getRawParameterValue("POP");
   for (int i = 0; i < 88; ++i) {
     keyParams[i] = apvts.getRawParameterValue("KEY_" + juce::String(i));
   }
@@ -48,6 +49,11 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Breath: peak/bell gain around 3 kHz for breathiness/air.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"BREATH", 1}, "Breath", -12.0f, 12.0f, 0.0f));
+  // Pop Filter: trigger threshold (dB) for the plosive detector.
+  // 0 dB = filter never triggers (effectively disabled);
+  // lower (e.g. -24 dB) = filter triggers more readily on quieter plosives.
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"POP", 1}, "Pop Filter", -24.0f, 0.0f, 0.0f));
 
   // Keys 0-87 for A0 to C8. 1 means enabled, 0 means disabled.
   for (int i = 0; i < 88; ++i) {
@@ -257,7 +263,9 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced, detectedHz);
     float sibilantsDb = sibilantsParam ? sibilantsParam->load() : 0.0f;
     float breathDb    = breathParam    ? breathParam->load()    : 0.0f;
+    float popMaxDb    = popParam       ? popParam->load()       : 0.0f;
     pitchShifter.setToneShaping(sibilantsDb, breathDb);
+    pitchShifter.setPopFilter(popMaxDb);
     pitchShifter.process(buffer);
   }
 
