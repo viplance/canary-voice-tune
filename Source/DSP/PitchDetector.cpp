@@ -16,6 +16,15 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   lastValidPitch = 0.0f;
   confidence = 0.0f;
   holdCounter = 0;
+  for (auto& v : medianHistory) v = 0.0f;
+  medianIndex = 0;
+  medianFilled = 0;
+}
+
+float PitchDetector::medianOf(float a, float b, float c, float d, float e) const {
+  float v[5] = { a, b, c, d, e };
+  std::sort(v, v + 5);
+  return v[2];
 }
 
 float PitchDetector::process(const float *audioData, int numSamples) {
@@ -23,48 +32,76 @@ float PitchDetector::process(const float *audioData, int numSamples) {
     circularBuffer[writeIndex] = audioData[i];
     writeIndex = (writeIndex + 1) % yinBufferSize;
   }
-  
-  // Calculate RMS to determine if voiced/active
+
   float rms = 0.0f;
-  for (float sample : circularBuffer) {
-    rms += sample * sample;
-  }
+  for (float sample : circularBuffer) rms += sample * sample;
   rms = std::sqrt(rms / yinBufferSize);
-  
+
   float rawPitch = 0.0f;
   if (rms > 0.01f) {
     rawPitch = getPitchYin();
   }
 
   if (rawPitch > 0.0f) {
-    // Got a valid detection
-    // If we already have a valid pitch, only accept the new one if it's
-    // reasonably close (within ~4 semitones) to avoid octave jumps
+    // Octave correction against history. YIN is most prone to picking the
+    // 2× harmonic when the fundamental is weak, or the 0.5× sub-harmonic
+    // when window length lets a half-period fit. Compare against the
+    // long-term lastValidPitch and snap obvious octaves back into place.
     if (lastValidPitch > 0.0f) {
-      float ratio = rawPitch / lastValidPitch;
-      if (ratio > 0.79f && ratio < 1.26f) {
-        // Close enough — smooth toward the new pitch
-        lastValidPitch = lastValidPitch * 0.7f + rawPitch * 0.3f;
+      float r = rawPitch / lastValidPitch;
+      // Up an octave?
+      if (r > 1.7f && r < 2.3f) {
+        rawPitch *= 0.5f;
+      }
+      // Down an octave?
+      else if (r > 0.43f && r < 0.6f) {
+        rawPitch *= 2.0f;
+      }
+      // 3:2 / 2:3 — perfect-fifth confusions sometimes happen on whistled
+      // tones; don't auto-correct those, they're usually genuine.
+    }
+
+    // Push the (possibly corrected) raw pitch through a 5-frame median
+    // filter to reject single-frame outliers.
+    medianHistory[medianIndex] = rawPitch;
+    medianIndex = (medianIndex + 1) % kMedianHistory;
+    if (medianFilled < kMedianHistory) ++medianFilled;
+    float pitchEst = rawPitch;
+    if (medianFilled >= kMedianHistory) {
+      pitchEst = medianOf(medianHistory[0], medianHistory[1],
+                          medianHistory[2], medianHistory[3],
+                          medianHistory[4]);
+    }
+
+    // Smooth into lastValidPitch. Big jumps now (after octave correction +
+    // median) are most likely real — accept with light smoothing rather
+    // than the previous "raw assignment" that caused single-block flips.
+    if (lastValidPitch > 0.0f) {
+      float ratio = pitchEst / lastValidPitch;
+      if (ratio > 0.85f && ratio < 1.18f) {
+        lastValidPitch = lastValidPitch * 0.7f + pitchEst * 0.3f;
       } else {
-        // Big jump — could be a real note change or an octave error.
-        // Accept it but don't smooth (allows genuine note transitions).
-        lastValidPitch = rawPitch;
+        // Larger but still plausible step (≤ ~3 semitones) — accept with
+        // a bit of smoothing to absorb residual noise.
+        lastValidPitch = lastValidPitch * 0.4f + pitchEst * 0.6f;
       }
     } else {
-      lastValidPitch = rawPitch;
+      lastValidPitch = pitchEst;
     }
     confidence = 1.0f;
     holdCounter = 0;
   } else {
-    // No valid detection this frame
     if (holdCounter < holdFrames && lastValidPitch > 0.0f) {
-      // Hold the last known pitch (avoids gap at word beginnings/endings)
       holdCounter++;
       confidence = 1.0f - ((float)holdCounter / (float)holdFrames);
     } else {
-      // Held long enough — declare unvoiced
       lastValidPitch = 0.0f;
       confidence = 0.0f;
+      // Clear the median ring so the next voiced phrase doesn't get
+      // contaminated by the previous one's pitches.
+      for (auto& v : medianHistory) v = 0.0f;
+      medianIndex = 0;
+      medianFilled = 0;
     }
   }
 
@@ -74,7 +111,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
 float PitchDetector::getPitchYin() {
   int halfBufferSize = yinBufferSize / 2;
   std::vector<float> yinBuffer(halfBufferSize, 0.0f);
-  
+
   // 1. Difference function
   for (int tau = 1; tau < halfBufferSize; tau++) {
     for (int i = 0; i < halfBufferSize; i++) {
@@ -89,18 +126,20 @@ float PitchDetector::getPitchYin() {
   yinBuffer[0] = 1.0f;
   float runningSum = 0.0f;
   int tauEstimate = -1;
-  
+
   for (int tau = 1; tau < halfBufferSize; tau++) {
     runningSum += yinBuffer[tau];
     if (runningSum == 0.0f) {
-        yinBuffer[tau] = 1.0f;
+      yinBuffer[tau] = 1.0f;
     } else {
-        yinBuffer[tau] *= tau / runningSum;
+      yinBuffer[tau] *= tau / runningSum;
     }
-    
-    // 3. Absolute threshold
+
+    // 3. Absolute threshold — find the FIRST tau below tolerance, then
+    // descend to the local minimum. Picking the first qualifier (rather
+    // than the global minimum) is what suppresses 2× harmonic errors
+    // because the true fundamental's tau is shorter than its harmonic's.
     if (tauEstimate == -1 && yinBuffer[tau] < yinTolerance) {
-      // Find the local minimum
       while (tau + 1 < halfBufferSize && yinBuffer[tau + 1] < yinBuffer[tau]) {
         tau++;
       }
@@ -118,8 +157,32 @@ float PitchDetector::getPitchYin() {
         tauEstimate = tau;
       }
     }
-    if (minVal > 0.5f) { 
-       return 0.0f; // Unvoiced
+    if (minVal > 0.5f) {
+      return 0.0f; // Unvoiced
+    }
+  }
+
+  // 4b. Octave-down sanity check: if a half-period candidate exists with
+  // nearly the same yinBuffer value, prefer the LONGER tau (= lower pitch).
+  // Specifically, if tauEstimate*2 is within bounds and yinBuffer at that
+  // tau is at most ~1.4× the chosen one's value, the chosen tau was likely
+  // the 2nd harmonic of the true fundamental.
+  if (tauEstimate > 0) {
+    int doubleTau = tauEstimate * 2;
+    if (doubleTau < halfBufferSize - 1) {
+      float curVal = yinBuffer[tauEstimate];
+      // Search for the local minimum near doubleTau (±10% window).
+      int searchLo = juce::jmax(1, (int)(doubleTau * 0.9));
+      int searchHi = juce::jmin(halfBufferSize - 2, (int)(doubleTau * 1.1));
+      int bestT = doubleTau;
+      float bestV = yinBuffer[doubleTau];
+      for (int t = searchLo; t <= searchHi; ++t) {
+        if (yinBuffer[t] < bestV) { bestV = yinBuffer[t]; bestT = t; }
+      }
+      // If the long-tau candidate is comparably good, switch to it.
+      if (bestV < curVal * 1.4f && bestV < 0.30f) {
+        tauEstimate = bestT;
+      }
     }
   }
 
@@ -141,11 +204,11 @@ float PitchDetector::getPitchYin() {
   if (betterTau <= 0.0f) return 0.0f;
 
   float pitchHz = currentSampleRate / betterTau;
-  
+
   // Bounding to human voice
   if (pitchHz < 60.0f || pitchHz > 1200.0f) {
     return 0.0f;
   }
-  
+
   return pitchHz;
 }
