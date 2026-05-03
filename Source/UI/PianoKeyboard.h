@@ -15,6 +15,8 @@ public:
     // Returns true if the key highlight changed and requires a repaint
     bool updateDetectedPitch(float newPitchHz);
 
+    std::function<void(float)> onKeyClicked;
+
 private:
     juce::AudioProcessorValueTreeState& apvts;
     

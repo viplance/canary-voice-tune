@@ -40,6 +40,10 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
 
   setSize(1280, 400);
   startTimerHz(30); // 30 FPS for visual updates
+
+  pianoKeyboard.onKeyClicked = [this](float freq) {
+    audioProcessor.playPreviewTone(freq);
+  };
 }
 
 CanaryVoiceTuneAudioProcessorEditor::~CanaryVoiceTuneAudioProcessorEditor() {}

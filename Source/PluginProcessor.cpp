@@ -260,6 +260,49 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     pitchShifter.setToneShaping(sibilantsDb, breathDb);
     pitchShifter.process(buffer);
   }
+
+  // Preview tone generation
+  int samplesRem = previewSamplesRemaining.load();
+  if (samplesRem > 0) {
+    float freq = previewFrequencyHz.load();
+    float phaseDelta = (freq * 2.0f * juce::MathConstants<float>::pi) / static_cast<float>(getSampleRate());
+    int totalSamplesForTone = static_cast<int>(getSampleRate() * 0.5);
+
+    for (int i = 0; i < buffer.getNumSamples(); ++i) {
+      if (samplesRem > 0) {
+        float env = 1.0f;
+        // Fade out
+        if (samplesRem < 1000) {
+          env = static_cast<float>(samplesRem) / 1000.0f;
+        }
+        // Fade in
+        int samplesPlayed = totalSamplesForTone - samplesRem;
+        if (samplesPlayed < 1000) {
+          env *= static_cast<float>(samplesPlayed) / 1000.0f;
+        }
+
+        float sample = std::sin(previewPhase) * 0.2f * env;
+        previewPhase += phaseDelta;
+        if (previewPhase >= 2.0f * juce::MathConstants<float>::pi) {
+          previewPhase -= 2.0f * juce::MathConstants<float>::pi;
+        }
+
+        for (int ch = 0; ch < totalNumOutputChannels; ++ch) {
+          buffer.addSample(ch, i, sample);
+        }
+        samplesRem--;
+      } else {
+        break;
+      }
+    }
+    previewSamplesRemaining.store(samplesRem);
+  }
+}
+
+void CanaryVoiceTuneAudioProcessor::playPreviewTone(float freq) {
+    previewFrequencyHz.store(freq);
+    previewSamplesRemaining.store(static_cast<int>(getSampleRate() * 0.5));
+    previewPhase = 0.0f;
 }
 
 juce::AudioProcessorEditor *CanaryVoiceTuneAudioProcessor::createEditor() {

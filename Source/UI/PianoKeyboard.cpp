@@ -146,5 +146,11 @@ void PianoKeyboard::mouseDown (const juce::MouseEvent& e)
             param->setValueNotifyingHost(param->getValue() > 0.5f ? 0.0f : 1.0f);
             repaint();
         }
+
+        if (onKeyClicked)
+        {
+            float freq = 440.0f * std::pow(2.0f, (clickedNote + 21 - 69) / 12.0f);
+            onKeyClicked(freq);
+        }
     }
 }

@@ -36,6 +36,11 @@ public:
   juce::AudioProcessorValueTreeState apvts;
   std::atomic<float> currentDetectedPitch{0.0f};
 
+  void playPreviewTone(float freq);
+  std::atomic<float> previewFrequencyHz{0.0f};
+  std::atomic<int> previewSamplesRemaining{0};
+  float previewPhase = 0.0f;
+
 private:
   juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
