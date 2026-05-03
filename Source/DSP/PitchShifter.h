@@ -23,6 +23,10 @@ public:
 
     void setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz);
 
+    // Sibilants: high-shelf gain (dB) around 7 kHz, controls "s/sh/t" presence.
+    // Breath: bell gain (dB) around 3 kHz, controls breathiness/air.
+    void setToneShaping(float sibilantsDb, float breathDb);
+
 private:
     double currentSampleRate = 44100.0;
     float currentRatio = 1.0f;
@@ -53,4 +57,15 @@ private:
     int dryDelayWritePos = 0;
     int dryDelayLength = 0;
     float crossoverHz = 5000.0f;
+
+    // Tone-shaping EQ applied at the very end of the chain.
+    // Sibilants: high-shelf at 7 kHz (consonant clarity).
+    // Breath: bell at 3 kHz (presence/air on breath noise).
+    juce::dsp::IIR::Filter<float> sibilantsFilter;
+    juce::dsp::IIR::Filter<float> breathFilter;
+    float currentSibilantsDb = 0.0f;
+    float currentBreathDb    = 0.0f;
+    static constexpr float kSibilantsHz = 7000.0f;
+    static constexpr float kBreathHz    = 3000.0f;
+    static constexpr float kBreathQ     = 0.9f;
 };

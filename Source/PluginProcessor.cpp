@@ -19,6 +19,8 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
   releaseParam = apvts.getRawParameterValue("RELEASE");
   rangeParam = apvts.getRawParameterValue("RANGE");
   vibratoParam = apvts.getRawParameterValue("VIBRATO");
+  sibilantsParam = apvts.getRawParameterValue("SIBILANTS");
+  breathParam = apvts.getRawParameterValue("BREATH");
   for (int i = 0; i < 88; ++i) {
     keyParams[i] = apvts.getRawParameterValue("KEY_" + juce::String(i));
   }
@@ -40,6 +42,12 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Remove Vibrato: 0% = keep natural pitch wobble, 100% = perfectly flat note
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"VIBRATO", 1}, "Remove Vibrato", 0.0f, 100.0f, 50.0f));
+  // Sibilants: high-shelf gain around 7 kHz for "s/sh/t" presence.
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
+  // Breath: peak/bell gain around 3 kHz for breathiness/air.
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"BREATH", 1}, "Breath", -12.0f, 12.0f, 0.0f));
 
   // Keys 0-87 for A0 to C8. 1 means enabled, 0 means disabled.
   for (int i = 0; i < 88; ++i) {
@@ -247,6 +255,9 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       currentDetectedPitch.store(0.0f);
 
     pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced, detectedHz);
+    float sibilantsDb = sibilantsParam ? sibilantsParam->load() : 0.0f;
+    float breathDb    = breathParam    ? breathParam->load()    : 0.0f;
+    pitchShifter.setToneShaping(sibilantsDb, breathDb);
     pitchShifter.process(buffer);
   }
 }

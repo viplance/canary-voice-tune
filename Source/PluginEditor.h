@@ -24,6 +24,8 @@ private:
   RotaryKnob releaseKnob;
   RotaryKnob rangeKnob;
   RotaryKnob vibratoKnob;
+  RotaryKnob sibilantsKnob;
+  RotaryKnob breathKnob;
 
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
       attackAttachment;
@@ -33,6 +35,10 @@ private:
       rangeAttachment;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
       vibratoAttachment;
+  std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+      sibilantsAttachment;
+  std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+      breathAttachment;
 
   PianoKeyboard pianoKeyboard;
 

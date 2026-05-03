@@ -46,6 +46,8 @@ private:
   std::atomic<float> *releaseParam = nullptr;
   std::atomic<float> *rangeParam = nullptr;
   std::atomic<float> *vibratoParam = nullptr;
+  std::atomic<float> *sibilantsParam = nullptr;
+  std::atomic<float> *breathParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
   int lastBestMidi = -1;
   bool wasVoiced = false;

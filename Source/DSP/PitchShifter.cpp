@@ -89,12 +89,44 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     dryHighpass.reset();
     wetLowpass.reset();
 
+    // Tone-shaping EQ
+    sibilantsFilter.prepare(spec);
+    breathFilter.prepare(spec);
+    sibilantsFilter.reset();
+    breathFilter.reset();
+    currentSibilantsDb = 9999.0f; // force update on first setToneShaping
+    currentBreathDb    = 9999.0f;
+    setToneShaping(0.0f, 0.0f);
+
     // Dry delay must equal the wet path's total latency so that the high
     // band realigns with the shifted low/mid band when summed.
     dryDelayLength = currentLatency;
     if (dryDelayLength < 1) dryDelayLength = 1;
     dryDelayBuffer.assign((size_t)dryDelayLength + 16, 0.0f);
     dryDelayWritePos = 0;
+}
+
+void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
+{
+    // Skip work if values haven't changed — IIR coefficient recomputation
+    // each block is wasteful and can cause clicks via coefficient swapping.
+    if (std::abs(sibilantsDb - currentSibilantsDb) > 0.01f) {
+        currentSibilantsDb = sibilantsDb;
+        float gain = std::pow(10.0f, sibilantsDb / 20.0f);
+        // High-shelf: lifts/cuts everything above ~7 kHz with a gentle slope.
+        *sibilantsFilter.coefficients =
+            *juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+                currentSampleRate, kSibilantsHz, 0.7071f, gain);
+    }
+    if (std::abs(breathDb - currentBreathDb) > 0.01f) {
+        currentBreathDb = breathDb;
+        float gain = std::pow(10.0f, breathDb / 20.0f);
+        // Bell at 3 kHz: emphasizes the "breath" / consonant intelligibility
+        // band without affecting the deep body or extreme highs.
+        *breathFilter.coefficients =
+            *juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+                currentSampleRate, kBreathHz, kBreathQ, gain);
+    }
 }
 
 void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
@@ -227,6 +259,21 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
     // Sum dry highs onto the wet lows.
     for (int i = 0; i < numSamples; ++i) {
         channelData[i] += dryHighData[i];
+    }
+
+    // 3) Tone-shaping EQ on the final summed signal. Each filter is bypassed
+    //    when its gain is at 0 dB to save CPU and avoid pointless filter-state
+    //    interaction with the audio when the user isn't actively shaping.
+    if (std::abs(currentBreathDb) > 0.01f || std::abs(currentSibilantsDb) > 0.01f) {
+        juce::dsp::AudioBlock<float> toneBlock(&channelData, 1, (size_t)numSamples);
+        juce::dsp::ProcessContextReplacing<float> toneCtx(toneBlock);
+        if (std::abs(currentBreathDb) > 0.01f)    breathFilter.process(toneCtx);
+        if (std::abs(currentSibilantsDb) > 0.01f) sibilantsFilter.process(toneCtx);
+    } else {
+        // Keep filter state fresh while bypassed — reset so re-engaging
+        // doesn't bring back stale samples (which could click).
+        breathFilter.reset();
+        sibilantsFilter.reset();
     }
 
     // Mirror to right channel

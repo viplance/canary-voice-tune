@@ -16,16 +16,26 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   vibratoAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
           audioProcessor.apvts, "VIBRATO", vibratoKnob);
+  sibilantsAttachment =
+      std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+          audioProcessor.apvts, "SIBILANTS", sibilantsKnob);
+  breathAttachment =
+      std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+          audioProcessor.apvts, "BREATH", breathKnob);
 
   attackKnob.setTextValueSuffix(" ms");
   releaseKnob.setTextValueSuffix(" ms");
   rangeKnob.setTextValueSuffix(" %");
   vibratoKnob.setTextValueSuffix(" %");
+  sibilantsKnob.setTextValueSuffix(" dB");
+  breathKnob.setTextValueSuffix(" dB");
 
   addAndMakeVisible(attackKnob);
   addAndMakeVisible(releaseKnob);
   addAndMakeVisible(rangeKnob);
   addAndMakeVisible(vibratoKnob);
+  addAndMakeVisible(sibilantsKnob);
+  addAndMakeVisible(breathKnob);
   addAndMakeVisible(pianoKeyboard);
 
   setSize(1280, 400);
@@ -59,6 +69,10 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
              juce::Justification::centredBottom, false);
   g.drawText("Remove Vibrato", getLabelBounds(vibratoKnob),
              juce::Justification::centredBottom, false);
+  g.drawText("Sibilants", getLabelBounds(sibilantsKnob),
+             juce::Justification::centredBottom, false);
+  g.drawText("Breath", getLabelBounds(breathKnob),
+             juce::Justification::centredBottom, false);
 }
 
 void CanaryVoiceTuneAudioProcessorEditor::resized() {
@@ -75,7 +89,7 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
   // Labels are drawn in paint() at knob.getBounds().translated(0, -22)
   auto labelRow = knobStrip.removeFromTop(22); // reserved for painted labels
   (void)labelRow;
-  int knobWidth = knobStrip.getWidth() / 4;
+  int knobWidth = knobStrip.getWidth() / 6;
 
   attackKnob.setBounds(
       knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
@@ -84,6 +98,10 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
   rangeKnob.setBounds(
       knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
   vibratoKnob.setBounds(
+      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+  sibilantsKnob.setBounds(
+      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+  breathKnob.setBounds(
       knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
 }
 
