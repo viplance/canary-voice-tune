@@ -249,9 +249,10 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
       if (targetRatio < 0.5f)
         targetRatio = 0.5f;
 
-      // Onset grace: hold ratio at 1.0 for the first 30ms of voicing so the
-      // YIN detector has time to lock and we don't shift on the first jittery
-      // pitch estimate (which is the main source of "quack" at word starts).
+      // Onset grace: hold ratio at 1.0 for the first ~50 ms of voicing so the
+      // pitch detector has time to lock and we don't shift on the first jittery
+      // estimate (octave error, sub-pulse noise) which is the main source of
+      // a "swoop"/quack at word starts.
       if (voicedSampleCount < onsetGraceSamples) {
         targetRatio = 1.0f;
       }

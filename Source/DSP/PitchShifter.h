@@ -32,6 +32,12 @@ public:
     // progressively quieter plosives.
     void setPopFilter(float thresholdDb);
 
+    // Tell the shifter that a new voicing onset just happened. The shifter
+    // will crossfade dry -> wet over the next `fadeMs` milliseconds so that
+    // the slewing pitch ratio at the very start of the phrase is hidden
+    // (audible "swoop" / quack at low Attack values).
+    void triggerOnsetFade(float fadeMs);
+
     // Returns 0..1 = current pop-ducking activity, for UI lamp display.
     // 1 = fully ducking right now, 0 = idle.
     float getPopActivity() const { return popActivity; }
@@ -104,4 +110,15 @@ private:
     static constexpr float kPopDuckDb = -12.0f;
     std::vector<float> popBassTemp;
     std::vector<float> popHighTemp;
+
+    // Onset fade-in: at the start of each voiced segment, the wet output is
+    // hidden behind dry while the smoothedRatio is racing to its target.
+    // This eliminates the "swoop"/quack audible at low Attack values when the
+    // user hears the engine ramping in real time. After onsetFadeRemaining
+    // counts down to zero, output is pure wet.
+    int   onsetFadeTotal     = 0; // total samples of the fade
+    int   onsetFadeRemaining = 0; // samples left
+    int   onsetFadeDelay     = 0; // samples to wait before starting the fade
+                                  // (== wet path latency, so the fade lands
+                                  // exactly when the onset arrives at output)
 };

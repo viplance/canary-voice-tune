@@ -124,6 +124,9 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     popBassTemp.assign((size_t)samplesPerBlock + 16, 0.0f);
     popHighTemp.assign((size_t)samplesPerBlock + 16, 0.0f);
 
+    onsetFadeTotal = 0;
+    onsetFadeRemaining = 0;
+
     // Dry delay must equal the wet path's total latency so that the high
     // band realigns with the shifted low/mid band when summed.
     dryDelayLength = currentLatency;
@@ -160,6 +163,21 @@ void PitchShifter::setPopFilter(float thresholdDb)
     if (thresholdDb > 0.0f)   thresholdDb = 0.0f;
     if (thresholdDb < -36.0f) thresholdDb = -36.0f;
     popThresholdDb = thresholdDb;
+}
+
+void PitchShifter::triggerOnsetFade(float fadeMs)
+{
+    if (fadeMs < 0.5f) fadeMs = 0.5f;
+    int n = (int)((float)currentSampleRate * fadeMs / 1000.0f);
+    if (n < 16) n = 16;
+    onsetFadeTotal     = n;
+    onsetFadeRemaining = n;
+    // The processor calls us at the moment it *detects* an onset on the live
+    // input, but our wet output is delayed by `currentLatency` samples. We
+    // must wait that delay before starting the actual crossfade — otherwise
+    // we'd fade dry over silence/previous-phrase tail and miss the real onset
+    // when it finally arrives at output.
+    onsetFadeDelay = currentLatency;
 }
 
 void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
@@ -373,6 +391,14 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
         breathFilter.reset();
         sibilantsFilter.reset();
     }
+
+    // (Onset fade-in removed: crossfading dry against wet during the start of
+    // a phrase produced comb-filtering / crackles because RubberBand inevitably
+    // shifts the phase of the wet path even at ratio≈1, so dry and wet are not
+    // identical even for unshifted material. The "swoop at low Attack" is
+    // better solved by simply not letting the engine see a stale ratio at
+    // onset — see PluginProcessor's voicing-onset reset, which now clears the
+    // smoother state so the very first ratio is computed from real pitch.)
 
     // Mirror to right channel
     if (buffer.getNumChannels() > 1) {
