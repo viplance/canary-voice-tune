@@ -24,6 +24,16 @@ public:
   // cancellation ratios.
   float getInstantPitch() const { return instantPitch; }
 
+  // True when the current block looks like a consonant (fricative,
+  // plosive transient, sibilant) or other non-tonal sound rather than a
+  // sustained vowel. Downstream stages use this to wipe their lock state
+  // so the next vowel starts fresh and the consonant isn't "tuned".
+  // Detection combines three cheap features:
+  //   1. Zero-crossing rate (high for fricatives/sibilants).
+  //   2. High-band-to-low-band energy ratio (high for unvoiced consonants).
+  //   3. YIN tau-minimum depth (shallow when no clear periodicity).
+  bool isConsonant() const { return consonantFlag; }
+
 private:
   double currentSampleRate = 44100.0;
 
@@ -46,6 +56,17 @@ private:
   float confidence = 0.0f;
   int holdCounter = 0;
   static const int holdFrames = 8;
+
+  // Per-block consonant classifier (computed inside process()).
+  bool  consonantFlag = false;
+  // Simple 1st-order high-pass state for the high-band energy split.
+  // Cutoff is set in prepare() to ~2.5 kHz.
+  float hpfState = 0.0f;
+  float hpfAlpha = 0.0f;
+  // Lowest YIN tau-value seen in the current block (after the cumulative
+  // mean normalisation). Used as a "voiced-ness" proxy: deep minima are
+  // characteristic of a vowel, shallow ones of an unvoiced consonant.
+  float lastYinMinValue = 1.0f;
 
   // Short median filter on recent raw pitches, to suppress single-frame
   // octave jumps (one aberrant detection in three is rejected).

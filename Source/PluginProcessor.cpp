@@ -382,21 +382,33 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float smoothedHz  = pitchDetector.process(monoMix.data(), buffer.getNumSamples());
   float instantHz   = pitchDetector.getInstantPitch();
   float detectedHz  = (instantHz > 0.0f) ? instantHz : smoothedHz;
-  bool  isVoiced    = (detectedHz > 0.0f);
+  bool  isConsonant = pitchDetector.isConsonant();
+  bool  isVoiced    = (detectedHz > 0.0f) && !isConsonant;
 
   // ---- Maintain voicing state at segment boundaries ----------------------
   // Onset: fresh start, clear everything.
-  // Offset: keep the lock alive for `releaseMs` so that (a) the shifter's
-  // release fade still has a coherent target to bend toward, and (b) the
-  // keyboard highlight stays on the just-sung note for the whole tail.
-  // Only when the release window expires (or the singer resumes) do we
-  // actually clear the voicing state.
-  if (isVoiced && !wasVoiced) {
+  // Consonant (sibilant, plosive, fricative): wipe all lock state instantly
+  // and tell the shifter to drop to dry over ~10 ms — we don't want the
+  // tuner to either prolong the previous vowel into the consonant or to
+  // tune the consonant itself, and we want the next vowel to start fresh.
+  // Offset (silence after vowel): keep the lock alive for `releaseMs` so
+  // (a) the shifter's release fade still has a coherent target to bend
+  // toward, and (b) the keyboard highlight stays on the just-sung note for
+  // the whole tail. Only when the release window expires (or the singer
+  // resumes) do we actually clear the voicing state.
+  bool  consonantFastRelease = false;
+  float effectiveReleaseMs   = releaseMs;
+  if (isConsonant) {
     resetVoicingState();
     releaseHoldSamplesRemaining = 0;
     releaseHoldMidi = -1;
-  }
-  if (!isVoiced) {
+    consonantFastRelease = true;
+    effectiveReleaseMs = 10.0f;
+  } else if (isVoiced && !wasVoiced) {
+    resetVoicingState();
+    releaseHoldSamplesRemaining = 0;
+    releaseHoldMidi = -1;
+  } else if (!isVoiced) {
     if (wasVoiced && lockedMidi >= 0) {
       releaseHoldMidi = lockedMidi;
       releaseHoldSamplesRemaining =
@@ -422,20 +434,23 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   }
 
   // ---- Notify UI of any note-change event --------------------------------
-  // Note-off events are delayed by an extra `releaseMs` so the keyboard
-  // highlight tracks the shifter's release tail. Without this the key goes
-  // dark the instant the singer stops, while the shifter is still audibly
-  // fading the last tuned note.
+  // Note-off events are delayed by the matching release tail so the
+  // keyboard highlight tracks the shifter's fade-out. Vowel-to-silence uses
+  // the user's Release; consonant uses the fast 10 ms reset.
   int displayedNoteIdx = (isVoiced && displayedMidi >= 21 && displayedMidi <= 108)
                             ? (displayedMidi - 21) : -1;
   int extraDelay = (displayedNoteIdx < 0)
-                       ? (int)(releaseMs * 0.001f * (float)getSampleRate())
+                       ? (int)(effectiveReleaseMs * 0.001f * (float)getSampleRate())
                        : 0;
   pushNoteEvent(displayedNoteIdx, extraDelay);
 
   // ---- Hand off to the shifter -------------------------------------------
-  pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced,
-                              detectedHz, vibratoAmount);
+  // On a consonant we pass `effectiveReleaseMs=10` so the shifter ramps
+  // its ratio back to 1.0 quickly. Suppress that path with juce::ignoreUnused
+  // of consonantFastRelease — the flag is implicit in effectiveReleaseMs.
+  juce::ignoreUnused(consonantFastRelease);
+  pitchShifter.setTargetShift(targetRatio, attackMs, effectiveReleaseMs,
+                              isVoiced, detectedHz, vibratoAmount);
   pitchShifter.setToneShaping(sibilantsDb, breathDb);
   pitchShifter.setPopFilter(popMaxDb);
   pitchShifter.process(buffer);

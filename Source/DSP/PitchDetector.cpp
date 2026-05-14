@@ -20,6 +20,15 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   for (auto& v : medianHistory) v = 0.0f;
   medianIndex = 0;
   medianFilled = 0;
+  consonantFlag = false;
+  lastYinMinValue = 1.0f;
+  // 1-pole HPF with -3 dB at ~2.5 kHz. Coefficient form:
+  //   y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+  // alpha ≈ exp(-2π·fc/fs). At fc=2500 Hz, fs=44100 Hz → alpha ≈ 0.70.
+  // We store the simpler equivalent: hpfAlpha = exp(-2π·fc/fs).
+  const float twoPi = 6.2831853f;
+  hpfAlpha = std::exp(-twoPi * 2500.0f / (float)currentSampleRate);
+  hpfState = 0.0f;
 }
 
 float PitchDetector::medianOf(float a, float b, float c, float d, float e) const {
@@ -38,10 +47,51 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   for (float sample : circularBuffer) rms += sample * sample;
   rms = std::sqrt(rms / yinBufferSize);
 
+  // ---- Consonant detection on the JUST-arrived block ---------------------
+  // Three cheap features, computed only on the new samples (not the whole
+  // circular buffer) so we react to sub-block events like a sudden 's':
+  //   ZCR ........ sample-to-sample sign flips per sample
+  //   HF ratio ... energy above ~2.5 kHz divided by total energy
+  //   YIN depth .. how deep the cumulative-mean-normalised tau minimum is
+  //                (filled in below by getPitchYin())
+  int   zeroCrossings = 0;
+  float prevSample    = (numSamples > 0) ? audioData[0] : 0.0f;
+  float blockEnergy   = 0.0f;
+  float highEnergy    = 0.0f;
+  float prevX         = hpfState; // re-use hpfState as the "prev x" memory
+  float prevY         = 0.0f;
+  for (int i = 0; i < numSamples; ++i) {
+    float x = audioData[i];
+    blockEnergy += x * x;
+    if ((x >= 0.0f) != (prevSample >= 0.0f)) ++zeroCrossings;
+    prevSample = x;
+    // 1-pole HPF: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+    float y = hpfAlpha * (prevY + x - prevX);
+    highEnergy += y * y;
+    prevX = x;
+    prevY = y;
+  }
+  hpfState = prevX;
+  float zcr      = (numSamples > 0) ? (float)zeroCrossings / (float)numSamples : 0.0f;
+  float hfRatio  = (blockEnergy > 1e-9f) ? (highEnergy / blockEnergy) : 0.0f;
+
   float rawPitch = 0.0f;
   if (rms > 0.01f) {
     rawPitch = getPitchYin();
   }
+
+  // Classify. Any one of the three "loud unvoiced" symptoms triggers it,
+  // *except* when the block is essentially silent (RMS very low) — there's
+  // nothing useful to reset on. Also gate by minimum energy so background
+  // hum doesn't flicker the flag.
+  // Thresholds picked empirically:
+  //   zcr > 0.20            -> fricative/sibilant (s, sh, f, th)
+  //   hfRatio > 0.55        -> high-band-heavy unvoiced consonant
+  //   yinMinValue > 0.45    -> no clear periodicity in the YIN search
+  bool loudEnough  = (rms > 0.02f);
+  bool unvoicedLike = (zcr > 0.20f) || (hfRatio > 0.55f)
+                  || (lastYinMinValue > 0.45f && rawPitch <= 0.0f);
+  consonantFlag = loudEnough && unvoicedLike;
 
   if (rawPitch > 0.0f) {
     // Octave correction against history. YIN is most prone to picking the
@@ -118,6 +168,8 @@ float PitchDetector::process(const float *audioData, int numSamples) {
 float PitchDetector::getPitchYin() {
   int halfBufferSize = yinBufferSize / 2;
   std::vector<float> yinBuffer(halfBufferSize, 0.0f);
+  // Default to "no clear minimum"; overwritten below once we pick tau.
+  lastYinMinValue = 1.0f;
 
   // 1. Difference function
   for (int tau = 1; tau < halfBufferSize; tau++) {
@@ -193,6 +245,16 @@ float PitchDetector::getPitchYin() {
         tauEstimate = bestT;
       }
     }
+  }
+
+  // Record the minimum's depth so callers can tell "I found a clear vowel"
+  // (deep minimum, value near 0) from "I had to fall back to the best of a
+  // bad lot" (shallow minimum, value near 0.5). Used by the consonant
+  // classifier in process().
+  if (tauEstimate > 0 && tauEstimate < halfBufferSize) {
+    lastYinMinValue = yinBuffer[tauEstimate];
+  } else {
+    lastYinMinValue = 1.0f;
   }
 
   // 5. Parabolic interpolation
