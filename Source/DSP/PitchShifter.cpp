@@ -25,6 +25,7 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
         RubberBand::RubberBandStretcher::OptionEngineFiner |
         RubberBand::RubberBandStretcher::OptionPitchHighConsistency |
         RubberBand::RubberBandStretcher::OptionFormantPreserved |
+        RubberBand::RubberBandStretcher::OptionPhaseLaminar |
         RubberBand::RubberBandStretcher::OptionWindowStandard |
         RubberBand::RubberBandStretcher::OptionChannelsTogether;
 
@@ -173,7 +174,8 @@ void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs,
     // 1/detectedHz) wobbles at the vibrato rate and we must track it fast
     // enough to actually cancel that wobble. Otherwise the Attack time
     // constant lags ~5 Hz vibrato and the wobble survives at the output.
-    float fastMs = 5.0f;
+    // 12ms is a sweet spot: fast enough to kill 5Hz, slow enough to ignore jitter.
+    float fastMs = 12.0f;
     float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
     if (trackingMs < 1.0f) trackingMs = 1.0f;
     float timeS = trackingMs / 1000.0f;

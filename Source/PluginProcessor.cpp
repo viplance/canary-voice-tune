@@ -247,9 +247,9 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // Target is always an active key (with `correctionStrength` controlling how
   // far we pull the raw pitch toward it). `lockBypass` only fades in the dry
   // signal during the lock-engage window.
-  float diff           = effectiveMidi - bestMidi;
+  float diff           = smoothedMidi - bestMidi;
   float remainingDiff  = diff * (1.0f - correctionStrength);
-  float rawTargetMidi  = bestMidi + remainingDiff;
+  float rawTargetMidi  = bestMidi + remainingDiff + clampedDev;
   rawTargetMidi        = rawTargetMidi * (1.0f - lockBypass)
                        + effectiveMidi * lockBypass;
 
