@@ -162,16 +162,16 @@ float PitchDetector::getPitchYin() {
     }
   }
 
-  // 4b. Octave-down sanity check: if a half-period candidate exists with
-  // nearly the same yinBuffer value, prefer the LONGER tau (= lower pitch).
-  // Specifically, if tauEstimate*2 is within bounds and yinBuffer at that
-  // tau is at most ~1.4× the chosen one's value, the chosen tau was likely
-  // the 2nd harmonic of the true fundamental.
+  // 4b. Octave-down sanity check: when YIN locked onto the 2nd harmonic of a
+  // low voice, the true fundamental sits at ~2× tau and gives a strictly
+  // DEEPER minimum than the harmonic. We only switch to the longer tau if it
+  // is *meaningfully* better — not merely comparable — otherwise pure tones
+  // (whose subharmonics produce equally-low YIN minima at every multiple of
+  // the period) get mis-detected an octave low.
   if (tauEstimate > 0) {
     int doubleTau = tauEstimate * 2;
     if (doubleTau < halfBufferSize - 1) {
       float curVal = yinBuffer[tauEstimate];
-      // Search for the local minimum near doubleTau (±10% window).
       int searchLo = juce::jmax(1, (int)(doubleTau * 0.9));
       int searchHi = juce::jmin(halfBufferSize - 2, (int)(doubleTau * 1.1));
       int bestT = doubleTau;
@@ -179,8 +179,10 @@ float PitchDetector::getPitchYin() {
       for (int t = searchLo; t <= searchHi; ++t) {
         if (yinBuffer[t] < bestV) { bestV = yinBuffer[t]; bestT = t; }
       }
-      // If the long-tau candidate is comparably good, switch to it.
-      if (bestV < curVal * 1.4f && bestV < 0.30f) {
+      // Require the long-tau minimum to be clearly deeper (≤ 70% of the
+      // short-tau value). This catches genuine 2nd-harmonic captures while
+      // leaving clean sine tones untouched.
+      if (bestV < curVal * 0.7f && bestV < 0.15f) {
         tauEstimate = bestT;
       }
     }

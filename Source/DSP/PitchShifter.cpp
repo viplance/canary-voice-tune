@@ -160,15 +160,23 @@ void PitchShifter::triggerOnsetFade(float fadeMs)
     onsetFadeDelay     = currentLatency;
 }
 
-void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
+void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs,
+                                  bool isVoiced, float detectedHz,
+                                  float vibratoAmount)
 {
     juce::ignoreUnused(detectedHz);
     currentRatio = ratio;
 
     float target = isVoiced ? currentRatio : 1.0f;
     float timeMs = isVoiced ? attackMs : releaseMs;
-    if (timeMs < 1.0f) timeMs = 1.0f;
-    float timeS = timeMs / 1000.0f;
+    // When the user has asked us to remove vibrato, the ratio (which embeds
+    // 1/detectedHz) wobbles at the vibrato rate and we must track it fast
+    // enough to actually cancel that wobble. Otherwise the Attack time
+    // constant lags ~5 Hz vibrato and the wobble survives at the output.
+    float fastMs = 5.0f;
+    float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
+    if (trackingMs < 1.0f) trackingMs = 1.0f;
+    float timeS = trackingMs / 1000.0f;
     alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
     targetRatio = target;
 }

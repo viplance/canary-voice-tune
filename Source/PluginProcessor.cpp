@@ -198,22 +198,26 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
     }
   }
 
-  // ---- Lock-engage fade + drift bypass -----------------------------------
-  // While engaging, force more dry; once engaged, use drift zones:
-  //   <1 semitone : full tune
-  //    1..2       : blend toward dry
-  //   >2          : full bypass (so a fast glissando isn't quack-tuned)
+  // ---- Lock-engage fade ---------------------------------------------------
+  // While engaging, blend toward dry so the attack curve is audible. Once
+  // engaged we always target an active key — if the singer drifts far from
+  // the locked note we follow the closest active key (`bestMidi`) instead
+  // of leaking the raw pitch, otherwise inactive notes would sound.
   float engageFade = juce::jlimit(0.0f, 1.0f,
                                   1000.0f * (float)lockEngageSamples / sr / attackMs);
-  float lockBypass = 1.0f;
+  float lockBypass = 1.0f - engageFade;
   if (lockedMidi >= 0) {
-    bestMidi = lockedMidi;
     float drift = std::abs(effectiveMidi - (float)lockedMidi);
-    float driftBypass = (drift > 1.0f) ? juce::jlimit(0.0f, 1.0f, drift - 1.0f) : 0.0f;
-    lockBypass = juce::jmax(driftBypass, 1.0f - engageFade);
+    // Within ~1 semitone of the lock, snap to the lock. Beyond that, follow
+    // the nearest active key so a sustained off-key pitch is still corrected
+    // (the lock itself re-arms after 120 ms of sustained drift, above).
+    if (drift <= 1.0f) bestMidi = lockedMidi;
   }
 
   // ---- Compute the ratio --------------------------------------------------
+  // Target is always an active key (with `correctionStrength` controlling how
+  // far we pull the raw pitch toward it). `lockBypass` only fades in the dry
+  // signal during the lock-engage window.
   float diff           = effectiveMidi - bestMidi;
   float remainingDiff  = diff * (1.0f - correctionStrength);
   float rawTargetMidi  = bestMidi + remainingDiff;
@@ -346,7 +350,8 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   pushNoteEvent(displayedNoteIdx);
 
   // ---- Hand off to the shifter -------------------------------------------
-  pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced, detectedHz);
+  pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced,
+                              detectedHz, vibratoAmount);
   pitchShifter.setToneShaping(sibilantsDb, breathDb);
   pitchShifter.setPopFilter(popMaxDb);
   pitchShifter.process(buffer);

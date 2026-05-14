@@ -25,7 +25,12 @@ public:
 
     int getLatencySamples() const { return currentLatency; }
 
-    void setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz);
+    // `vibratoAmount` (0..1 semitone) controls how fast the ratio tracks
+    // toward its target. At 0 the ratio tracks almost immediately so a
+    // wobbling detected pitch is cancelled out; at 1 the natural Attack/
+    // Release time is used so onsets keep their shape.
+    void setTargetShift(float ratio, float attackMs, float releaseMs,
+                        bool isVoiced, float detectedHz, float vibratoAmount);
 
     void setToneShaping(float sibilantsDb, float breathDb);
     void setPopFilter(float thresholdDb);
