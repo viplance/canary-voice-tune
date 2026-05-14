@@ -29,7 +29,7 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   attackKnob.setTextValueSuffix(" ms");
   releaseKnob.setTextValueSuffix(" ms");
   rangeKnob.setTextValueSuffix(" %");
-  vibratoKnob.setTextValueSuffix(" %");
+  vibratoKnob.setTextValueSuffix(" st");
   sibilantsKnob.setTextValueSuffix(" dB");
   breathKnob.setTextValueSuffix(" dB");
   popKnob.setTextValueSuffix(" dB");
@@ -82,7 +82,7 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
              juce::Justification::centredBottom, false);
   g.drawText("Range", getLabelBounds(rangeKnob),
              juce::Justification::centredBottom, false);
-  g.drawText("Remove Vibrato", getLabelBounds(vibratoKnob),
+  g.drawText("Vibrato", getLabelBounds(vibratoKnob),
              juce::Justification::centredBottom, false);
   g.drawText("Sibilants", getLabelBounds(sibilantsKnob),
              juce::Justification::centredBottom, false);

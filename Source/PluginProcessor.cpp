@@ -39,9 +39,10 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Range: 0% = no correction (bypass), 100% = full snap to nearest note
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"RANGE", 1}, "Range", 0.0f, 100.0f, 0.0f));
-  // Remove Vibrato: 0% = keep natural pitch wobble, 100% = perfectly flat note
+  // Vibrato: maximum pitch deviation (in semitones) allowed around the
+  // smoothed centre. 0 = perfectly flat, 1 = up to ±1 semitone of wobble.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"VIBRATO", 1}, "Remove Vibrato", 0.0f, 100.0f, 0.0f));
+      juce::ParameterID{"VIBRATO", 2}, "Vibrato", 0.0f, 1.0f, 1.0f));
   // Sibilants: high-shelf gain around 7 kHz for "s/sh/t" presence.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
@@ -124,32 +125,43 @@ void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
 
 int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
     float detectedHz, const bool* activeKeys, float blockSize, float sr,
-    float attackMs, float correctionStrength, float vibratoRemoval,
+    float attackMs, float correctionStrength, float vibratoAmount,
     float& outRatio) {
   voicedSampleCount += (int)blockSize;
 
   float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
 
-  // ---- Vibrato smoothing (adaptive lowpass on the pitch in semitone domain)
-  // Wide-amplitude jumps (real note changes) bypass the smoothing so the
-  // tracker doesn't lag a ratio behind on melodic transitions.
-  float blockDt   = blockSize / sr;
-  float vibTimeMs = 1.0f + vibratoRemoval * 200.0f;
+  // ---- Vibrato shaping (adaptive lowpass on the pitch in semitone domain)
+  // The smoothed centre tracks the slow pitch trend; the raw deviation around
+  // that centre is then clamped to ±vibratoAmount semitones. Wide-amplitude
+  // jumps (real note changes) bypass the smoothing so the tracker doesn't lag
+  // a ratio behind on melodic transitions.
+  float blockDt = blockSize / sr;
+  // Always smooth aggressively enough to recover the centre pitch; the
+  // wobble around it is reintroduced via the clamp below.
+  float vibTimeMs = 201.0f;
   if (smoothedMidi < 0.0f) {
     smoothedMidi = floatMidi;
   } else {
+    // The jump bypass should engage only for real note changes — i.e. a
+    // pitch excursion clearly larger than the allowed vibrato. Otherwise
+    // a wide vibrato would repeatedly trigger the bypass and the smoother
+    // would chase the wobble instead of averaging it out.
     float delta = std::abs(floatMidi - smoothedMidi);
+    float jumpLo = vibratoAmount + 0.5f;
+    float jumpHi = vibratoAmount + 1.2f;
     float jumpFactor;
-    if (delta < 0.5f)      jumpFactor = 0.0f;
-    else if (delta > 1.2f) jumpFactor = 1.0f;
-    else                   jumpFactor = (delta - 0.5f) / 0.7f;
+    if (delta < jumpLo)      jumpFactor = 0.0f;
+    else if (delta > jumpHi) jumpFactor = 1.0f;
+    else                     jumpFactor = (delta - jumpLo) / (jumpHi - jumpLo);
 
     float effectiveTimeMs = vibTimeMs * (1.0f - jumpFactor) + 1.0f * jumpFactor;
     float adaptiveAlpha = 1.0f - std::exp(-blockDt / (effectiveTimeMs / 1000.0f));
     smoothedMidi += adaptiveAlpha * (floatMidi - smoothedMidi);
   }
-  float effectiveMidi = smoothedMidi * vibratoRemoval
-                      + floatMidi    * (1.0f - vibratoRemoval);
+  float deviation     = floatMidi - smoothedMidi;
+  float clampedDev    = juce::jlimit(-vibratoAmount, vibratoAmount, deviation);
+  float effectiveMidi = smoothedMidi + clampedDev;
 
   // ---- Pick the active key closest to the smoothed pitch ------------------
   float lockPitch = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
@@ -296,7 +308,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float attackMs           = attackParam   ? attackParam->load()   : 10.0f;
   float releaseMs          = releaseParam  ? releaseParam->load()  : 100.0f;
   float correctionStrength = (rangeParam   ? rangeParam->load()    : 0.0f) / 100.0f;
-  float vibratoRemoval     = (vibratoParam ? vibratoParam->load()  : 0.0f) / 100.0f;
+  float vibratoAmount      = vibratoParam ? vibratoParam->load() : 1.0f;
   float sibilantsDb        = sibilantsParam? sibilantsParam->load(): 0.0f;
   float breathDb           = breathParam   ? breathParam->load()   : 0.0f;
   float popMaxDb           = popParam      ? popParam->load()      : 0.0f;
@@ -325,7 +337,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     displayedMidi = chooseTargetNoteAndRatio(
         detectedHz, activeKeys,
         (float)buffer.getNumSamples(), (float)getSampleRate(),
-        attackMs, correctionStrength, vibratoRemoval, targetRatio);
+        attackMs, correctionStrength, vibratoAmount, targetRatio);
   }
 
   // ---- Notify UI of any note-change event --------------------------------

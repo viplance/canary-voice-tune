@@ -63,7 +63,7 @@ private:
                                float sr,
                                float attackMs,
                                float correctionStrength,
-                               float vibratoRemoval,
+                               float vibratoAmount,
                                float& outRatio);
   void pushNoteEvent(int noteIndex /* -1 if unvoiced, else 0..87 */);
   void renderPreviewTone(juce::AudioBuffer<float>& buffer);
