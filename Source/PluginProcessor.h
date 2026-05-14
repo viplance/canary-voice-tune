@@ -95,6 +95,21 @@ private:
   float smoothedTargetMidi = -1.0f;
   int voicedSampleCount = 0;
 
+  // Re-lock stability tracking. `candidateMidi` is the note that has been
+  // proposed by the closest-active-key search across recent blocks; we only
+  // switch `lockedMidi` to it after it has stayed unchanged for at least
+  // `attackMs` worth of samples. This kills the per-block jitter that
+  // happens when `smoothedMidi` lands on the boundary between two adjacent
+  // active keys.
+  int candidateMidi = -1;
+  int candidateStableSamples = 0;
+
+  // Hold the previous `lockedMidi` (and its remaining hold-time) so the
+  // keyboard highlight and pitch-shift target stay coherent for the whole
+  // release fade, instead of vanishing the instant the singer stops.
+  int releaseHoldMidi = -1;
+  int releaseHoldSamplesRemaining = 0;
+
   // Lock-free SPSC ring of (visibleAtClock, note-index) events. The audio
   // thread pushes one entry whenever the displayed note index changes,
   // stamped with the audio-clock sample at which the corresponding audio

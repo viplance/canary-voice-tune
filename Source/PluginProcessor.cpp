@@ -167,37 +167,63 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   float effectiveMidi = smoothedMidi + clampedDev;
 
   // ---- Pick the active key closest to the smoothed pitch ------------------
-  float lockPitch = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
-  int bestMidi = -1;
-  float minDist = 1e9f;
+  // Hysteresis around the currently-locked note: the user's Range knob
+  // controls how aggressively we want to stick to the chosen key. With
+  // strong correction we don't want the lock flipping between two adjacent
+  // active keys when `smoothedMidi` sits right on the boundary; with no
+  // correction the hysteresis is minimal so the displayed note still
+  // follows the singer closely.
+  float lockPitch    = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
+  float hysteresisSt = 0.1f + 0.5f * correctionStrength;
+  int   bestMidi     = -1;
+  float minDist      = 1e9f;
   for (int testMidi = 21; testMidi <= 108; ++testMidi) {
     if (! activeKeys[testMidi - 21]) continue;
     float d = std::abs(lockPitch - (float)testMidi);
+    // Give the incumbent locked note a "discount" so a challenger must be
+    // genuinely closer, not merely tied, to take its place.
+    if (testMidi == lockedMidi) d -= hysteresisSt;
     if (d < minDist) { minDist = d; bestMidi = testMidi; }
   }
   if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
 
   // ---- Note lock ----------------------------------------------------------
-  // Lock the first stable bestMidi after a 50 ms grace; release & re-lock if
-  // the singer sustains a different note for >120 ms (real melodic move).
-  const int lockGraceSamples = (int)(sr * 0.050f);
+  // First lock: capture the first stable bestMidi after a 50 ms grace.
+  // Re-lock: instead of "any 120 ms drift > 1.5 st" (which was both too
+  // strict for legato moves and too lenient for sub-semitone wobble), we
+  // require the candidate to be a *single*, *unchanged* bestMidi held for
+  // `attackMs` worth of samples. That ties stabilisation latency to the
+  // same control the user uses for snap responsiveness.
+  const int lockGraceSamples   = (int)(sr * 0.050f);
+  const int reLockStableSamples = (int)(sr * juce::jmax(attackMs, 1.0f) / 1000.0f);
   if (voicedSampleCount >= lockGraceSamples && lockedMidi < 0) {
     lockedMidi = bestMidi;
     lockEngageSamples = 0;
     lockReleaseSamples = 0;
+    candidateMidi = -1;
+    candidateStableSamples = 0;
   }
   if (lockedMidi >= 0) {
     lockEngageSamples += (int)blockSize;
-    float driftFromLock = std::abs(effectiveMidi - (float)lockedMidi);
-    if (driftFromLock > 1.5f) {
-      lockReleaseSamples += (int)blockSize;
-      if (1000.0f * (float)lockReleaseSamples / sr > 120.0f) {
-        lockedMidi = bestMidi;
+
+    if (bestMidi != lockedMidi) {
+      if (bestMidi == candidateMidi) {
+        candidateStableSamples += (int)blockSize;
+      } else {
+        candidateMidi = bestMidi;
+        candidateStableSamples = (int)blockSize;
+      }
+      if (candidateStableSamples >= reLockStableSamples) {
+        lockedMidi = candidateMidi;
         lockEngageSamples = 0;
         lockReleaseSamples = 0;
+        candidateMidi = -1;
+        candidateStableSamples = 0;
       }
     } else {
-      lockReleaseSamples = 0;
+      // Singer is back on the locked note — drop the pending candidate.
+      candidateMidi = -1;
+      candidateStableSamples = 0;
     }
   }
 
@@ -359,8 +385,30 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   bool  isVoiced    = (detectedHz > 0.0f);
 
   // ---- Maintain voicing state at segment boundaries ----------------------
-  if (isVoiced && !wasVoiced) resetVoicingState();
-  if (!isVoiced)              resetVoicingState();
+  // Onset: fresh start, clear everything.
+  // Offset: keep the lock alive for `releaseMs` so that (a) the shifter's
+  // release fade still has a coherent target to bend toward, and (b) the
+  // keyboard highlight stays on the just-sung note for the whole tail.
+  // Only when the release window expires (or the singer resumes) do we
+  // actually clear the voicing state.
+  if (isVoiced && !wasVoiced) {
+    resetVoicingState();
+    releaseHoldSamplesRemaining = 0;
+    releaseHoldMidi = -1;
+  }
+  if (!isVoiced) {
+    if (wasVoiced && lockedMidi >= 0) {
+      releaseHoldMidi = lockedMidi;
+      releaseHoldSamplesRemaining =
+          (int)(releaseMs * 0.001f * (float)getSampleRate());
+    }
+    if (releaseHoldSamplesRemaining > 0) {
+      releaseHoldSamplesRemaining -= buffer.getNumSamples();
+    } else {
+      resetVoicingState();
+      releaseHoldMidi = -1;
+    }
+  }
   wasVoiced = isVoiced;
 
   // ---- Compute target ratio + the note we're tuning to -------------------
