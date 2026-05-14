@@ -17,6 +17,13 @@ public:
   // Confidence of the last detection (0.0 = none, 1.0 = very sure)
   float getConfidence() const { return confidence; }
 
+  // Per-block unsmoothed estimate (post median filter, pre `lastValidPitch`
+  // exponential averaging). 0 if the current block was unvoiced. Useful when
+  // a downstream stage needs to cancel the live pitch wobble — the smoothed
+  // pitch returned by process() lags it by 3-4 blocks and produces stale
+  // cancellation ratios.
+  float getInstantPitch() const { return instantPitch; }
+
 private:
   double currentSampleRate = 44100.0;
 
@@ -35,6 +42,7 @@ private:
   float getPitchYin();
 
   float lastValidPitch = 0.0f;
+  float instantPitch = 0.0f;
   float confidence = 0.0f;
   int holdCounter = 0;
   static const int holdFrames = 8;

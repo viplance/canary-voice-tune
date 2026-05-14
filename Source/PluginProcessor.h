@@ -65,7 +65,11 @@ private:
                                float correctionStrength,
                                float vibratoAmount,
                                float& outRatio);
-  void pushNoteEvent(int noteIndex /* -1 if unvoiced, else 0..87 */);
+  // `extraDelaySamples` is added on top of the shifter latency when the
+  // event should become visible later than the audio (e.g. a note-off has
+  // to wait for the shifter's release fade to complete).
+  void pushNoteEvent(int noteIndex /* -1 if unvoiced, else 0..87 */,
+                     int extraDelaySamples = 0);
   void renderPreviewTone(juce::AudioBuffer<float>& buffer);
 
   PitchDetector pitchDetector;
@@ -91,15 +95,24 @@ private:
   float smoothedTargetMidi = -1.0f;
   int voicedSampleCount = 0;
 
-  // Lock-free SPSC ring of note-change events. The audio thread pushes one
-  // entry whenever the displayed note index changes; the UI thread drains
-  // it on each timer tick. This guarantees fast melodic passages aren't
-  // visually skipped between UI frames.
-  static constexpr int kNoteHistorySize = 32;
-  std::atomic<int> noteHistory[kNoteHistorySize] = {};
+  // Lock-free SPSC ring of (visibleAtClock, note-index) events. The audio
+  // thread pushes one entry whenever the displayed note index changes,
+  // stamped with the audio-clock sample at which the corresponding audio
+  // will actually be heard. That's `pushClock + currentLatencySamples` for
+  // a note-on, plus `releaseMs` for a note-off so the highlight stays lit
+  // for the duration of the shifter's release tail (otherwise the key goes
+  // dark while the tuner is still audibly fading out).
+  static constexpr int kNoteHistorySize = 64;
+  std::atomic<int>      noteHistoryNote[kNoteHistorySize] = {};
+  std::atomic<int64_t>  noteHistoryVisibleAt[kNoteHistorySize] = {};
   std::atomic<int> noteHistoryWriteIdx { 0 };
   std::atomic<int> noteHistoryReadIdx { 0 };
   int lastPushedNote = -1; // audio thread only
+
+  // Sample-accurate audio-thread clock. Incremented by buffer.numSamples per
+  // block. UI thread reads it to compute "how old is this note event".
+  std::atomic<int64_t> audioSampleClock { 0 };
+  std::atomic<int>     currentLatencySamples { 0 };
 
   // Preview tone state
   std::atomic<float> previewFrequencyHz { 0.0f };

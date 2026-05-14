@@ -14,6 +14,7 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   std::fill(circularBuffer.begin(), circularBuffer.end(), 0.0f);
   writeIndex = 0;
   lastValidPitch = 0.0f;
+  instantPitch = 0.0f;
   confidence = 0.0f;
   holdCounter = 0;
   for (auto& v : medianHistory) v = 0.0f;
@@ -73,6 +74,11 @@ float PitchDetector::process(const float *audioData, int numSamples) {
                           medianHistory[4]);
     }
 
+    // Stash the per-block estimate before exponential smoothing so callers
+    // that need the live wobble (e.g. vibrato cancellation in the shifter)
+    // can read it without the multi-block lag of `lastValidPitch`.
+    instantPitch = pitchEst;
+
     // Smooth into lastValidPitch. Big jumps now (after octave correction +
     // median) are most likely real — accept with light smoothing rather
     // than the previous "raw assignment" that caused single-block flips.
@@ -96,6 +102,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
       confidence = 1.0f - ((float)holdCounter / (float)holdFrames);
     } else {
       lastValidPitch = 0.0f;
+      instantPitch = 0.0f;
       confidence = 0.0f;
       // Clear the median ring so the next voiced phrase doesn't get
       // contaminated by the previous one's pitches.

@@ -67,7 +67,10 @@ void CanaryVoiceTuneAudioProcessor::prepareToPlay(double sampleRate,
                                                   int samplesPerBlock) {
   pitchDetector.prepare(sampleRate, samplesPerBlock);
   pitchShifter.prepare(sampleRate, samplesPerBlock);
-  setLatencySamples(pitchShifter.getLatencySamples());
+  int lat = pitchShifter.getLatencySamples();
+  setLatencySamples(lat);
+  currentLatencySamples.store(lat, std::memory_order_release);
+  audioSampleClock.store(0, std::memory_order_release);
 }
 
 void CanaryVoiceTuneAudioProcessor::releaseResources() {}
@@ -234,15 +237,28 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
                                       * (rawTargetMidi - smoothedTargetMidi);
 
   float targetHz = 440.0f * std::pow(2.0f, (smoothedTargetMidi - 69.0f) / 12.0f);
+  // The cancellation denominator must reflect the live (per-block) pitch,
+  // not a multi-block-smoothed estimate, otherwise the shifter applies a
+  // stale ratio and the singer's wobble survives to the output. Caller hands
+  // us the raw per-block estimate as `detectedHz`.
   outRatio = juce::jlimit(0.5f, 2.0f, targetHz / detectedHz);
   return bestMidi;
 }
 
-void CanaryVoiceTuneAudioProcessor::pushNoteEvent(int noteIndex) {
+void CanaryVoiceTuneAudioProcessor::pushNoteEvent(int noteIndex,
+                                                  int extraDelaySamples) {
   if (noteIndex == lastPushedNote) return;
   lastPushedNote = noteIndex;
   int w = noteHistoryWriteIdx.load(std::memory_order_relaxed);
-  noteHistory[w].store(noteIndex, std::memory_order_release);
+  noteHistoryNote[w].store(noteIndex, std::memory_order_relaxed);
+  // Compute the audio-clock at which this event becomes audible. For a
+  // note-on (or note-change) that's pushClock + shifter latency. For a
+  // note-off, the caller adds `releaseMs` worth of samples so the highlight
+  // stays lit while the shifter completes its release fade.
+  int64_t pushClock = audioSampleClock.load(std::memory_order_relaxed);
+  int64_t lat       = (int64_t)currentLatencySamples.load(std::memory_order_relaxed);
+  int64_t visibleAt = pushClock + lat + (int64_t)extraDelaySamples;
+  noteHistoryVisibleAt[w].store(visibleAt, std::memory_order_release);
   noteHistoryWriteIdx.store((w + 1) % kNoteHistorySize,
                             std::memory_order_release);
 }
@@ -251,12 +267,18 @@ int CanaryVoiceTuneAudioProcessor::popLatestNoteEvent() {
   int w = noteHistoryWriteIdx.load(std::memory_order_acquire);
   int r = noteHistoryReadIdx.load(std::memory_order_relaxed);
   if (r == w) return -2; // ring empty
+  // Each event carries the audio-clock sample at which it becomes audible.
+  // Drain all entries that are due, returning the most recent of them.
+  int64_t now = audioSampleClock.load(std::memory_order_acquire);
   int latest = -2;
-  while (r != w) {
-    latest = noteHistory[r].load(std::memory_order_acquire);
-    r = (r + 1) % kNoteHistorySize;
+  int newR = r;
+  while (newR != w) {
+    int64_t visibleAt = noteHistoryVisibleAt[newR].load(std::memory_order_acquire);
+    if (now < visibleAt) break;   // not yet audible; keep for later
+    latest = noteHistoryNote[newR].load(std::memory_order_relaxed);
+    newR = (newR + 1) % kNoteHistorySize;
   }
-  noteHistoryReadIdx.store(r, std::memory_order_release);
+  noteHistoryReadIdx.store(newR, std::memory_order_release);
   return latest;
 }
 
@@ -325,9 +347,16 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   }
 
   // ---- Pitch detection ---------------------------------------------------
+  // `process()` updates state and returns the smoothed pitch (good for UI
+  // and lock decisions). `getInstantPitch()` is the unsmoothed per-block
+  // estimate — we feed THAT to the tuner so the cancellation ratio reflects
+  // the live wobble. Using the smoothed pitch here makes the ratio lag the
+  // input by 3-4 blocks and the wobble survives at the output.
   buildMonoMix(buffer);
-  float detectedHz = pitchDetector.process(monoMix.data(), buffer.getNumSamples());
-  bool isVoiced = (detectedHz > 0.0f);
+  float smoothedHz  = pitchDetector.process(monoMix.data(), buffer.getNumSamples());
+  float instantHz   = pitchDetector.getInstantPitch();
+  float detectedHz  = (instantHz > 0.0f) ? instantHz : smoothedHz;
+  bool  isVoiced    = (detectedHz > 0.0f);
 
   // ---- Maintain voicing state at segment boundaries ----------------------
   if (isVoiced && !wasVoiced) resetVoicingState();
@@ -345,9 +374,16 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   }
 
   // ---- Notify UI of any note-change event --------------------------------
+  // Note-off events are delayed by an extra `releaseMs` so the keyboard
+  // highlight tracks the shifter's release tail. Without this the key goes
+  // dark the instant the singer stops, while the shifter is still audibly
+  // fading the last tuned note.
   int displayedNoteIdx = (isVoiced && displayedMidi >= 21 && displayedMidi <= 108)
                             ? (displayedMidi - 21) : -1;
-  pushNoteEvent(displayedNoteIdx);
+  int extraDelay = (displayedNoteIdx < 0)
+                       ? (int)(releaseMs * 0.001f * (float)getSampleRate())
+                       : 0;
+  pushNoteEvent(displayedNoteIdx, extraDelay);
 
   // ---- Hand off to the shifter -------------------------------------------
   pitchShifter.setTargetShift(targetRatio, attackMs, releaseMs, isVoiced,
@@ -358,6 +394,12 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
 
   // ---- Preview tone (when the user clicks a key on the keyboard) ---------
   renderPreviewTone(buffer);
+
+  // Advance the audio clock AFTER the block is processed. `pushNoteEvent`
+  // above stamps the event with the start-of-block clock, so the UI knows
+  // exactly which sample produced this note.
+  audioSampleClock.fetch_add((int64_t)buffer.getNumSamples(),
+                             std::memory_order_release);
 }
 
 void CanaryVoiceTuneAudioProcessor::playPreviewTone(float freq) {
