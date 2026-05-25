@@ -33,6 +33,8 @@ public:
   //   2. High-band-to-low-band energy ratio (high for unvoiced consonants).
   //   3. YIN tau-minimum depth (shallow when no clear periodicity).
   bool isConsonant() const { return consonantFlag; }
+  bool isBreath() const { return breathFlag; }
+
 
 private:
   double currentSampleRate = 44100.0;
@@ -75,4 +77,18 @@ private:
   int   medianIndex = 0;
   int   medianFilled = 0;
   float medianOf(float a, float b, float c, float d, float e) const;
+
+  bool  breathFlag = false;
+  int   breathBlockCounter = 0;
+
+  juce::dsp::IIR::Filter<float> lowFilter;
+  juce::dsp::IIR::Filter<float> midHpFilter;
+  juce::dsp::IIR::Filter<float> midLpFilter;
+  juce::dsp::IIR::Filter<float> highFilter;
+
+  std::vector<float> lowScratch;
+  std::vector<float> midScratch;
+  std::vector<float> highScratch;
 };
+
+

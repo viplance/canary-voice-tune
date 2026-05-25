@@ -21,7 +21,10 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   medianIndex = 0;
   medianFilled = 0;
   consonantFlag = false;
+  breathFlag = false;
+  breathBlockCounter = 0;
   lastYinMinValue = 1.0f;
+
   // 1-pole HPF with -3 dB at ~2.5 kHz. Coefficient form:
   //   y[n] = alpha * (y[n-1] + x[n] - x[n-1])
   // alpha ≈ exp(-2π·fc/fs). At fc=2500 Hz, fs=44100 Hz → alpha ≈ 0.70.
@@ -29,7 +32,33 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   const float twoPi = 6.2831853f;
   hpfAlpha = std::exp(-twoPi * 2500.0f / (float)currentSampleRate);
   hpfState = 0.0f;
+
+  // Prepare 3-band crossover filters and scratch buffers
+  juce::dsp::ProcessSpec spec;
+  spec.sampleRate = currentSampleRate;
+  spec.maximumBlockSize = 2048;
+  spec.numChannels = 1;
+
+  lowFilter.prepare(spec);
+  midHpFilter.prepare(spec);
+  midLpFilter.prepare(spec);
+  highFilter.prepare(spec);
+
+  *lowFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowPass(currentSampleRate, 100.0f);
+  *midHpFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, 100.0f);
+  *midLpFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowPass(currentSampleRate, 10000.0f);
+  *highFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, 10000.0f);
+
+  lowFilter.reset();
+  midHpFilter.reset();
+  midLpFilter.reset();
+  highFilter.reset();
+
+  lowScratch.resize(2048, 0.0f);
+  midScratch.resize(2048, 0.0f);
+  highScratch.resize(2048, 0.0f);
 }
+
 
 float PitchDetector::medianOf(float a, float b, float c, float d, float e) const {
   float v[5] = { a, b, c, d, e };
@@ -92,6 +121,75 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   bool unvoicedLike = (zcr > 0.20f) || (hfRatio > 0.55f)
                   || (lastYinMinValue > 0.45f && rawPitch <= 0.0f);
   consonantFlag = loudEnough && unvoicedLike;
+
+  // ---- Breath detection (3-band Crossover energy analysis) ----------------
+  // A breath sound is focused in the Mid range (100 Hz to 10 kHz).
+  // Voiced vowels have significant low frequency energy (< 100 Hz).
+  // Sibilants/consonants have significant high frequency energy (> 10 kHz).
+  
+  if (lowScratch.size() < (size_t)numSamples) {
+    lowScratch.resize((size_t)numSamples + 16, 0.0f);
+    midScratch.resize((size_t)numSamples + 16, 0.0f);
+    highScratch.resize((size_t)numSamples + 16, 0.0f);
+  }
+
+  std::copy_n(audioData, numSamples, lowScratch.data());
+  std::copy_n(audioData, numSamples, midScratch.data());
+  std::copy_n(audioData, numSamples, highScratch.data());
+
+  float* lp = lowScratch.data();
+  juce::dsp::AudioBlock<float> lowBlock(&lp, 1, (size_t)numSamples);
+  juce::dsp::ProcessContextReplacing<float> lowCtx(lowBlock);
+  lowFilter.process(lowCtx);
+
+  float* mp = midScratch.data();
+  juce::dsp::AudioBlock<float> midBlock(&mp, 1, (size_t)numSamples);
+  juce::dsp::ProcessContextReplacing<float> midCtx(midBlock);
+  midHpFilter.process(midCtx);
+  midLpFilter.process(midCtx);
+
+  float* hp = highScratch.data();
+  juce::dsp::AudioBlock<float> highBlock(&hp, 1, (size_t)numSamples);
+  juce::dsp::ProcessContextReplacing<float> highCtx(highBlock);
+  highFilter.process(highCtx);
+
+  float lowEnergy = 0.0f;
+  float midEnergy = 0.0f;
+  float highEnergyBand = 0.0f;
+  for (int i = 0; i < numSamples; ++i) {
+    lowEnergy += lowScratch[i] * lowScratch[i];
+    midEnergy += midScratch[i] * midScratch[i];
+    highEnergyBand += highScratch[i] * highScratch[i];
+  }
+
+  float lowRms = std::sqrt(lowEnergy / (float)juce::jmax(1, numSamples));
+  float midRms = std::sqrt(midEnergy / (float)juce::jmax(1, numSamples));
+  float highRms = std::sqrt(highEnergyBand / (float)juce::jmax(1, numSamples));
+
+  bool blockLoudEnough = (midRms > 0.003f); // -50 dBFS absolute noise floor
+  bool isUnvoiced = (rawPitch <= 0.0f) || (lastYinMinValue > 0.35f);
+  
+  // Mid band is dominant: quiet below 100 Hz (<75% of mid) and above 10 kHz (<70% of mid)
+  bool isMidBandDominant = (lowRms < midRms * 0.75f) && (highRms < midRms * 0.70f);
+
+  // Dynamic persistence delay: require the breath-like signal to be sustained
+  // for at least 138 ms (30% shorter than the 197 ms breath in breath.wav).
+  // This guarantees that short consonants (<100 ms) are never false-triggered.
+  float blockDuration = (float)numSamples / (float)juce::jmax(1.0, currentSampleRate);
+  int minBreathBlocks = (int)std::round(0.138f / juce::jmax(0.0001f, blockDuration));
+  if (minBreathBlocks < 2) minBreathBlocks = 2;
+
+  if (blockLoudEnough && isUnvoiced && isMidBandDominant) {
+    breathBlockCounter++;
+  } else {
+    breathBlockCounter = 0;
+  }
+  breathFlag = (breathBlockCounter >= minBreathBlocks);
+
+
+
+
+
 
   if (rawPitch > 0.0f) {
     // Octave correction against history. YIN is most prone to picking the

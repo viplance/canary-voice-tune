@@ -79,9 +79,8 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
         wetLowpass[c].reset();
 
         sibilantsFilter[c].prepare(spec);
-        breathFilter[c].prepare(spec);
         sibilantsFilter[c].reset();
-        breathFilter[c].reset();
+
 
         popLow[c].prepare(spec);
         popHigh[c].prepare(spec);
@@ -94,8 +93,8 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     }
 
     currentSibilantsDb = 9999.0f;
-    currentBreathDb    = 9999.0f;
     setToneShaping(0.0f, 0.0f);
+
 
     popFastAlpha    = 1.0f - std::exp(-1.0f / (0.003f * (float)currentSampleRate));
     popSlowAlpha    = 1.0f - std::exp(-1.0f / (0.150f * (float)currentSampleRate));
@@ -120,10 +119,26 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     dryDelayBuffer.setSize(numChans, dryDelayCapacity, false, true, true);
     dryDelayBuffer.clear();
     dryDelayWritePos = 0;
+
+    // Breath Gate initialization
+    float breathAttackMs = 10.0f;
+    float breathReleaseMs = 40.0f;
+    breathAttackAlpha = 1.0f - std::exp(-1.0f / (breathAttackMs * 0.001f * currentSampleRate));
+    breathReleaseAlpha = 1.0f - std::exp(-1.0f / (breathReleaseMs * 0.001f * currentSampleRate));
+    breathGain = 1.0f;
+    breathThresholdDb = 0.0f;
+    isBreathActive = false;
+    breathActivity.store(0.0f);
+
+    breathInputRms.assign(256, 0.0f);
+    breathGateDelay.assign(256, false);
+    breathBlockIndex = 0;
+    this->blockSize = samplesPerBlock;
 }
 
 void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
 {
+    juce::ignoreUnused(breathDb);
     if (std::abs(sibilantsDb - currentSibilantsDb) > 0.01f) {
         currentSibilantsDb = sibilantsDb;
         float gain = std::pow(10.0f, sibilantsDb / 20.0f);
@@ -131,15 +146,6 @@ void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
             currentSampleRate, kSibilantsHz, 0.7071f, gain);
         for (int c = 0; c < numChans; ++c) {
             *sibilantsFilter[c].coefficients = *sibilantsCoeffs;
-        }
-    }
-    if (std::abs(breathDb - currentBreathDb) > 0.01f) {
-        currentBreathDb = breathDb;
-        float gain = std::pow(10.0f, breathDb / 20.0f);
-        breathCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-            currentSampleRate, kBreathHz, kBreathQ, gain);
-        for (int c = 0; c < numChans; ++c) {
-            *breathFilter[c].coefficients = *breathCoeffs;
         }
     }
 }
@@ -150,6 +156,16 @@ void PitchShifter::setPopFilter(float thresholdDb)
     if (thresholdDb < -36.0f) thresholdDb = -36.0f;
     popThresholdDb = thresholdDb;
 }
+
+void PitchShifter::setBreathGate(float thresholdDb, bool isBreathDetected)
+{
+    if (thresholdDb > 0.0f)   thresholdDb = 0.0f;
+    if (thresholdDb < -48.0f) thresholdDb = -48.0f;
+    breathThresholdDb = thresholdDb;
+    isBreathActive = isBreathDetected;
+}
+
+
 
 void PitchShifter::triggerOnsetFade(float fadeMs)
 {
@@ -196,7 +212,44 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
     auto* L = buffer.getWritePointer(0);
     auto* R = (hostChans > 1) ? buffer.getWritePointer(1) : L;
 
-    // ----- 0) Adaptive pop filter -----
+    // ----- 0) Smart breath gate (latency-compensated buffer setup) -----
+    int N = breathBlockIndex;
+    breathBlockIndex = (breathBlockIndex + 1) % 256;
+
+    // Get the current block envelope (RMS of the input block)
+    float rms = 0.0f;
+    for (int i = 0; i < numSamples; ++i) {
+        float sumSq = 0.0f;
+        for (int c = 0; c < procChans; ++c) {
+            float s = (c == 0) ? L[i] : R[i];
+            sumSq += s * s;
+        }
+        rms += sumSq / (float)procChans;
+    }
+    rms = std::sqrt(rms / (float)numSamples);
+    breathInputRms[(size_t)N] = rms;
+
+    // Determine latency-compensated gating decision
+    int delayBlocks = (blockSize > 0) ? (int)std::round((float)currentLatency / (float)blockSize) : 0;
+    float blockDuration = (float)numSamples / (float)juce::jmax(1.0, currentSampleRate);
+    int minBreathBlocks = (int)std::round(0.138f / juce::jmax(0.0001f, blockDuration));
+    if (minBreathBlocks < 2) minBreathBlocks = 2;
+
+    if (breathThresholdDb < -0.01f) {
+        if (isBreathActive) {
+            float threshLin = std::pow(10.0f, breathThresholdDb / 20.0f);
+            for (int b = N - minBreathBlocks + 1; b <= N; ++b) {
+                int idx = (b + 512) % 256;
+                if (breathInputRms[(size_t)idx] > threshLin) {
+                    breathGateDelay[(size_t)((b + delayBlocks + 512) % 256)] = true;
+                }
+            }
+        } else {
+            breathGateDelay[(size_t)((N + delayBlocks + 256) % 256)] = false;
+        }
+    }
+
+    // ----- 0b) Adaptive pop filter -----
     if (popThresholdDb < -0.01f) {
         if (popBassTemp.getNumSamples() < numSamples) {
             popBassTemp.setSize(numChans, numSamples + 16, false, true, true);
@@ -258,6 +311,7 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
         }
         popActivity.store(0.0f);
     }
+
 
     // ----- 1) Push input into dry-delay ring (used by air-band split) -----
     int dryBufLen = dryDelayCapacity;
@@ -384,20 +438,42 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
     }
 
     // ----- 6) Tone EQ (post) -----
-    if (std::abs(currentBreathDb) > 0.01f || std::abs(currentSibilantsDb) > 0.01f) {
+    if (std::abs(currentSibilantsDb) > 0.01f) {
         for (int c = 0; c < procChans; ++c) {
             float* dst = (c == 0) ? L : R;
             juce::dsp::AudioBlock<float> tBlock(&dst, 1, (size_t)numSamples);
             juce::dsp::ProcessContextReplacing<float> tCtx(tBlock);
-            if (std::abs(currentBreathDb)    > 0.01f) breathFilter[c].process(tCtx);
-            if (std::abs(currentSibilantsDb) > 0.01f) sibilantsFilter[c].process(tCtx);
+            sibilantsFilter[c].process(tCtx);
         }
     } else {
         for (int c = 0; c < procChans; ++c) {
-            breathFilter[c].reset();
             sibilantsFilter[c].reset();
         }
     }
+
+    // ----- 7) Smart breath gate (applied post-processing/at output) -----
+    if (breathThresholdDb < -0.01f) {
+        bool trigger = breathGateDelay[(size_t)N];
+        float duckGainLin = std::pow(10.0f, kBreathDuckDb / 20.0f);
+        float targetGain = trigger ? duckGainLin : 1.0f;
+        
+        float a = (targetGain < breathGain) ? breathAttackAlpha : breathReleaseAlpha;
+        for (int i = 0; i < numSamples; ++i) {
+            breathGain += a * (targetGain - breathGain);
+            for (int c = 0; c < procChans; ++c) {
+                float* dst = (c == 0) ? L : R;
+                dst[i] *= breathGain;
+            }
+        }
+        breathActivity.store(1.0f - breathGain);
+    } else {
+        breathGain = 1.0f;
+        breathActivity.store(0.0f);
+    }
+    breathGateDelay[(size_t)N] = false;
+
+
+
 
     // If host expects more channels than we processed, fill them.
     for (int c = procChans; c < hostChans; ++c) {

@@ -46,9 +46,12 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Sibilants: high-shelf gain around 7 kHz for "s/sh/t" presence.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
-  // Breath: peak/bell gain around 3 kHz for breathiness/air.
+  // Breath Gate: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"BREATH", 1}, "Breath", -12.0f, 12.0f, 0.0f));
+      juce::ParameterID{"BREATH", 1}, "Breath", -48.0f, 0.0f, 0.0f));
+
+
+
   // Pop Filter: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"POP", 1}, "Pop Filter", -24.0f, 0.0f, 0.0f));
@@ -383,7 +386,9 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float instantHz   = pitchDetector.getInstantPitch();
   float detectedHz  = (instantHz > 0.0f) ? instantHz : smoothedHz;
   bool  isConsonant = pitchDetector.isConsonant();
+  bool  isBreath    = pitchDetector.isBreath();
   bool  isVoiced    = (detectedHz > 0.0f) && !isConsonant;
+
 
   // ---- Maintain voicing state at segment boundaries ----------------------
   // Onset: fresh start, clear everything.
@@ -451,9 +456,11 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   juce::ignoreUnused(consonantFastRelease);
   pitchShifter.setTargetShift(targetRatio, attackMs, effectiveReleaseMs,
                               isVoiced, detectedHz, vibratoAmount);
-  pitchShifter.setToneShaping(sibilantsDb, breathDb);
+  pitchShifter.setToneShaping(sibilantsDb, 0.0f);
+  pitchShifter.setBreathGate(breathDb, isBreath);
   pitchShifter.setPopFilter(popMaxDb);
   pitchShifter.process(buffer);
+
 
   // ---- Preview tone (when the user clicks a key on the keyboard) ---------
   renderPreviewTone(buffer);

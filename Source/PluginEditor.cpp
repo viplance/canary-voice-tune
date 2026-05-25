@@ -33,8 +33,10 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   sibilantsKnob.setTextValueSuffix(" dB");
   breathKnob.setTextValueSuffix(" dB");
   popKnob.setTextValueSuffix(" dB");
-  // Initialise the activity lamp on the Pop Filter knob (idle = grey diode).
+  // Initialise the activity lamp on the Pop Filter and Breath Gate knobs (idle = grey diode).
   popKnob.setLampIntensity(0.0f);
+  breathKnob.setLampIntensity(0.0f);
+
 
   addAndMakeVisible(attackKnob);
   addAndMakeVisible(releaseKnob);
@@ -127,7 +129,9 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
 void CanaryVoiceTuneAudioProcessorEditor::timerCallback() {
   updateKeyboardFromAudioRing();
   updatePopLamp();
+  updateBreathLamp();
 }
+
 
 void CanaryVoiceTuneAudioProcessorEditor::updateKeyboardFromAudioRing() {
   // popLatestNoteEvent returns -2 when the ring is empty (no change since
@@ -153,3 +157,13 @@ void CanaryVoiceTuneAudioProcessorEditor::updatePopLamp() {
   float a = (target > current) ? 0.6f : 0.15f;
   popKnob.setLampIntensity(current + a * (target - current));
 }
+
+void CanaryVoiceTuneAudioProcessorEditor::updateBreathLamp() {
+  // Asymmetric smoothing: lamp lights up immediately when a breath is gated
+  // (a=0.6 ≈ ~50 ms rise) but decays gently after (a=0.15 ≈ ~200 ms fall).
+  float target  = audioProcessor.getBreathActivity();
+  float current = breathKnob.getLampIntensity();
+  float a = (target > current) ? 0.6f : 0.15f;
+  breathKnob.setLampIntensity(current + a * (target - current));
+}
+

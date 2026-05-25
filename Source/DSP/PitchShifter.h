@@ -34,9 +34,12 @@ public:
 
     void setToneShaping(float sibilantsDb, float breathDb);
     void setPopFilter(float thresholdDb);
+    void setBreathGate(float thresholdDb, bool isBreathDetected);
     void triggerOnsetFade(float fadeMs);
 
     float getPopActivity() const { return popActivity; }
+    float getBreathActivity() const { return breathActivity.load(); }
+
 
 private:
     static constexpr int kMaxChans = 2;
@@ -68,14 +71,26 @@ private:
 
     // Tone EQ — per-channel.
     std::array<juce::dsp::IIR::Filter<float>, kMaxChans> sibilantsFilter;
-    std::array<juce::dsp::IIR::Filter<float>, kMaxChans> breathFilter;
     juce::dsp::IIR::Coefficients<float>::Ptr sibilantsCoeffs;
-    juce::dsp::IIR::Coefficients<float>::Ptr breathCoeffs;
     float currentSibilantsDb = 0.0f;
-    float currentBreathDb    = 0.0f;
     static constexpr float kSibilantsHz = 7000.0f;
-    static constexpr float kBreathHz    = 3000.0f;
-    static constexpr float kBreathQ     = 0.9f;
+
+    // Smart Breath Gate.
+    float breathThresholdDb = 0.0f;
+    bool isBreathActive = false;
+    float breathGain = 1.0f;
+    float breathAttackAlpha = 0.0f;
+    float breathReleaseAlpha = 0.0f;
+    std::atomic<float> breathActivity { 0.0f };
+    static constexpr float kBreathDuckDb = -6.0f;
+
+    std::vector<float> breathInputRms;
+    std::vector<bool> breathGateDelay;
+    int breathBlockIndex = 0;
+    int blockSize = 0;
+
+
+
 
     // Adaptive pop filter (input pre-processing).
     // Crossover is per-channel; envelope follower runs on the channel-summed

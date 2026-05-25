@@ -93,3 +93,51 @@ if (APPLE)
         OSX_ARCHITECTURES "arm64"
     )
 endif()
+
+# =============================================================================
+# Testing Target
+# =============================================================================
+juce_add_console_app(CanaryVoiceTune_Tests
+    PRODUCT_NAME "CanaryVoiceTune_Tests"
+)
+
+target_sources(CanaryVoiceTune_Tests PRIVATE
+    test/Tests.cpp
+    Source/DSP/PitchDetector.cpp
+    Source/DSP/PitchDetector.h
+    Source/DSP/PitchShifter.cpp
+    Source/DSP/PitchShifter.h
+    ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
+)
+
+target_include_directories(CanaryVoiceTune_Tests PRIVATE
+    Source
+    ${rubberband_SOURCE_DIR}
+)
+
+juce_generate_juce_header(CanaryVoiceTune_Tests)
+
+
+target_compile_definitions(CanaryVoiceTune_Tests PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
+
+target_link_libraries(CanaryVoiceTune_Tests PRIVATE
+    juce::juce_audio_formats
+    juce::juce_core
+    juce::juce_dsp
+    "-framework Accelerate"
+)
+
+set_target_properties(CanaryVoiceTune_Tests PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+if (APPLE)
+    set_target_properties(CanaryVoiceTune_Tests PROPERTIES
+        OSX_ARCHITECTURES "arm64"
+    )
+endif()
+

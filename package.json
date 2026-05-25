@@ -1,13 +1,14 @@
 {
   "name": "canary-voice-tune",
-  "version": "0.9.98",
+  "version": "0.9.996",
   "description": "A high-performance VST3 audio plugin for MacOS M-Series to perform transparent voice pitch correction.",
   "scripts": {
     "fetch-juce": "mkdir -p vendor && if [ ! -d vendor/JUCE ]; then echo '>>> Downloading JUCE (develop)...' && curl -L https://github.com/juce-framework/JUCE/archive/refs/heads/develop.zip -o vendor/juce.zip && unzip -q vendor/juce.zip -d vendor && mv vendor/JUCE-develop vendor/JUCE && rm vendor/juce.zip && echo '>>> JUCE downloaded.'; else echo '>>> JUCE already present, skipping download.'; fi",
     "build": "pnpm run fetch-juce && mkdir -p build && cd build && cmake .. && cmake --build . --config Release 2>&1",
     "clean": "rm -rf build",
     "clean:all": "rm -rf build vendor",
-    "clean:reaper": "rm ~/Library/Application Support/REAPER/reaper-vstplugins_arm64.ini"
+    "clean:reaper": "rm ~/Library/Application Support/REAPER/reaper-vstplugins_arm64.ini",
+    "test": "./build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/breath.wav test/no_breath.wav"
   },
   "author": "Dzmitry Sharko",
   "license": "ISC"

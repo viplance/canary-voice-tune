@@ -20,6 +20,8 @@ public:
 private:
   void updateKeyboardFromAudioRing();
   void updatePopLamp();
+  void updateBreathLamp();
+
 
   CanaryVoiceTuneAudioProcessor &audioProcessor;
 

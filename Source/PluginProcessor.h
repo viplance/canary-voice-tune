@@ -44,6 +44,8 @@ public:
   int popLatestNoteEvent();
 
   float getPopActivity() const { return pitchShifter.getPopActivity(); }
+  float getBreathActivity() const { return pitchShifter.getBreathActivity(); }
+
 
   // -------- preview tone --------
   void playPreviewTone(float freq);
