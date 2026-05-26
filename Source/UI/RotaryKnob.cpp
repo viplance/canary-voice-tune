@@ -45,6 +45,12 @@ void ModernRotaryLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     g.strokePath(arc, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+juce::Font ModernRotaryLookAndFeel::getLabelFont (juce::Label& label)
+{
+    juce::ignoreUnused (label);
+    return juce::Font ("Outfit", 12.0f, juce::Font::plain);
+}
+
 RotaryKnob::RotaryKnob()
 {
     setLookAndFeel (&lf);

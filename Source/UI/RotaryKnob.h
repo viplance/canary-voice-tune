@@ -9,6 +9,7 @@ public:
     void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                            float sliderPos, const float rotaryStartAngle, const float rotaryEndAngle,
                            juce::Slider& slider) override;
+    juce::Font getLabelFont (juce::Label& label) override;
 };
 
 class RotaryKnob : public juce::Slider

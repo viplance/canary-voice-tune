@@ -87,6 +87,7 @@ private:
   std::atomic<float> *sibilantsParam = nullptr;
   std::atomic<float> *breathParam = nullptr;
   std::atomic<float> *popParam = nullptr;
+  std::atomic<float> *tuningModeParam = nullptr;
   std::atomic<float> *keyParams[88] = {nullptr};
 
   std::vector<float> monoMix; // scratch buffer for pitch detector input

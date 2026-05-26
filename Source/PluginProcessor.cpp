@@ -23,6 +23,7 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
   sibilantsParam = apvts.getRawParameterValue("SIBILANTS");
   breathParam    = apvts.getRawParameterValue("BREATH");
   popParam       = apvts.getRawParameterValue("POP");
+  tuningModeParam = apvts.getRawParameterValue("TUNING_MODE");
   for (int i = 0; i < 88; ++i)
     keyParams[i] = apvts.getRawParameterValue("KEY_" + juce::String(i));
 }
@@ -144,6 +145,11 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Pop Filter: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"POP", 1}, "Pop Filter", -36.0f, 0.0f, 0.0f));
+
+  // Tuning Mode: Choice between Modern (Transparent) and Classic (Hard-Tune / Low-Latency)
+  params.push_back(std::make_unique<juce::AudioParameterChoice>(
+      juce::ParameterID{"TUNING_MODE", 1}, "Tuning Mode",
+      juce::StringArray{"Modern (Transparent)", "Classic (Low-Latency)"}, 0));
 
   // Keys 0-87 for A0 to C8. true = note is in the active scale.
   for (int i = 0; i < 88; ++i) {
@@ -457,6 +463,15 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float sibilantsDb        = sibilantsParam? sibilantsParam->load(): 0.0f;
   float breathDb           = breathParam   ? breathParam->load()   : 0.0f;
   float popMaxDb           = popParam      ? popParam->load()      : 0.0f;
+  int   tuningMode         = tuningModeParam ? (int)std::round(tuningModeParam->load()) : 0;
+
+  pitchShifter.setTuningMode(tuningMode);
+  int newLatency = pitchShifter.getLatencySamples();
+  if (newLatency != currentLatencySamples.load())
+  {
+      setLatencySamples(newLatency);
+      currentLatencySamples.store(newLatency);
+  }
 
   bool activeKeys[88];
   bool anyKeyActive = false;

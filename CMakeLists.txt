@@ -45,6 +45,11 @@ target_sources(CanaryVoiceTune PRIVATE
     Source/UI/RotaryKnob.h
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
+    Source/DSP/PitchShifterBase.h
+    Source/DSP/ModernPitchShifter.cpp
+    Source/DSP/ModernPitchShifter.h
+    Source/DSP/ClassicPitchShifter.cpp
+    Source/DSP/ClassicPitchShifter.h
     Source/DSP/PitchShifter.cpp
     Source/DSP/PitchShifter.h
     ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
@@ -105,6 +110,11 @@ target_sources(CanaryVoiceTune_Tests PRIVATE
     test/Tests.cpp
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
+    Source/DSP/PitchShifterBase.h
+    Source/DSP/ModernPitchShifter.cpp
+    Source/DSP/ModernPitchShifter.h
+    Source/DSP/ClassicPitchShifter.cpp
+    Source/DSP/ClassicPitchShifter.h
     Source/DSP/PitchShifter.cpp
     Source/DSP/PitchShifter.h
     ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp

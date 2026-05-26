@@ -28,6 +28,9 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   popAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
           audioProcessor.apvts, "POP", popKnob);
+  tuningModeAttachment =
+      std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+          audioProcessor.apvts, "TUNING_MODE", tuningModeSelector);
 
   attackKnob.setTextValueSuffix(" ms");
   releaseKnob.setTextValueSuffix(" ms");
@@ -37,11 +40,14 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   sibilantsKnob.setTextValueSuffix(" dB");
   breathKnob.setTextValueSuffix(" dB");
   popKnob.setTextValueSuffix(" dB");
-  // Initialise the activity lamp on the Pop Filter and Breath Gate knobs (idle = grey diode).
   popKnob.setLampIntensity(0.0f);
   breathKnob.setLampIntensity(0.0f);
 
+  tuningModeSelector.onValueChange = [this]() {
+      repaint();
+  };
 
+  addAndMakeVisible(tuningModeSelector);
   addAndMakeVisible(attackKnob);
   addAndMakeVisible(releaseKnob);
   addAndMakeVisible(rangeKnob);
@@ -53,10 +59,6 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   addAndMakeVisible(pianoKeyboard);
 
   setSize(1280, 390);
-  // Higher refresh so short notes (30–80 ms) aren't missed between UI ticks
-  // — the audio thread can change `currentDetectedPitch` many times per
-  // 33 ms frame and we only ever read the latest, so a coarse timer can
-  // visually skip notes in fast melodic passages.
   startTimerHz(60);
 
   pianoKeyboard.onKeyClicked = [this](float freq) {
@@ -206,9 +208,11 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
   // 6. Header Title Render (Frosted golden text)
   g.setColour(juce::Colour::fromRGB(95, 80, 65)); // Warm golden bronze
   g.setFont(juce::Font("Outfit", 21.0f, juce::Font::bold));
-  g.drawFittedText(juce::String("CanaryVoiceTune v") + PLUGIN_VERSION,
+  g.drawFittedText(juce::String("Canary Voice Tune v") + PLUGIN_VERSION,
                    juce::Rectangle<int>(0, 0, getWidth(), 44),
                    juce::Justification::centred, 1);
+
+
 
   // Labels sit right above each knob in soft golden-charcoal text
   g.setFont(juce::Font("Outfit", 12.0f, juce::Font::plain));
@@ -218,6 +222,16 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
     return comp.getBounds().withY(comp.getY() - 22).withHeight(22).expanded(20, 0);
   };
 
+  bool isClassic = audioProcessor.apvts.getRawParameterValue("TUNING_MODE")->load() > 0.5f;
+  if (! isClassic) {
+      g.setColour(juce::Colour::fromRGB(180, 120, 10)); // Active golden-bronze
+  } else {
+      g.setColour(juce::Colour::fromRGB(145, 135, 120)); // Inactive grey-bronze
+  }
+  g.drawText("Modern", getLabelBounds(tuningModeSelector),
+             juce::Justification::centredBottom, false);
+
+  g.setColour(juce::Colour::fromRGB(105, 90, 75)); // Restore warm gold-charcoal for other labels
   g.drawText("Attack", getLabelBounds(attackKnob),
              juce::Justification::centredBottom, false);
   g.drawText("Release", getLabelBounds(releaseKnob),
@@ -250,24 +264,26 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
   // Labels are drawn in paint() at knob.getBounds().translated(0, -22)
   auto labelRow = knobStrip.removeFromTop(22); // reserved for painted labels
   (void)labelRow;
-  int knobWidth = knobStrip.getWidth() / 8;
+  int controlWidth = knobStrip.getWidth() / 9;
 
+  tuningModeSelector.setBounds(
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   attackKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   releaseKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   rangeKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   vibratoKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   exciterKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   sibilantsKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   breathKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   popKnob.setBounds(
-      knobStrip.removeFromLeft(knobWidth).withSizeKeepingCentre(80, 80));
+      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
 }
 
 void CanaryVoiceTuneAudioProcessorEditor::timerCallback() {

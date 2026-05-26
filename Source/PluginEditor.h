@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "UI/PianoKeyboard.h"
 #include "UI/RotaryKnob.h"
+#include "UI/TuningModeSelector.h"
 #include <JuceHeader.h>
 
 class CanaryVoiceTuneAudioProcessorEditor
@@ -36,6 +37,8 @@ private:
   RotaryKnob breathKnob;
   RotaryKnob popKnob;
 
+  TuningModeSelector tuningModeSelector;
+
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
       attackAttachment;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
@@ -52,6 +55,8 @@ private:
       breathAttachment;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
       popAttachment;
+  std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+      tuningModeAttachment;
 
   PianoKeyboard pianoKeyboard;
 
