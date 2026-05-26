@@ -143,7 +143,7 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
 
   // Pop Filter: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"POP", 1}, "Pop Filter", -24.0f, 0.0f, 0.0f));
+      juce::ParameterID{"POP", 1}, "Pop Filter", -36.0f, 0.0f, 0.0f));
 
   // Keys 0-87 for A0 to C8. true = note is in the active scale.
   for (int i = 0; i < 88; ++i) {
