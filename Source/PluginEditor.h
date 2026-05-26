@@ -7,7 +7,8 @@
 
 class CanaryVoiceTuneAudioProcessorEditor
     : public juce::AudioProcessorEditor,
-      public juce::Timer {
+      public juce::Timer,
+      public juce::AudioProcessorValueTreeState::Listener {
 public:
   CanaryVoiceTuneAudioProcessorEditor(
       CanaryVoiceTuneAudioProcessor &);
@@ -16,6 +17,7 @@ public:
   void paint(juce::Graphics &) override;
   void resized() override;
   void timerCallback() override;
+  void parameterChanged(const juce::String &parameterID, float newValue) override;
 
 private:
   void updateKeyboardFromAudioRing();

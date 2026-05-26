@@ -62,9 +62,24 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   pianoKeyboard.onKeyClicked = [this](float freq) {
     audioProcessor.playPreviewTone(freq);
   };
+
+  for (int i = 0; i < 88; ++i)
+    audioProcessor.apvts.addParameterListener("KEY_" + juce::String(i), this);
 }
 
-CanaryVoiceTuneAudioProcessorEditor::~CanaryVoiceTuneAudioProcessorEditor() {}
+CanaryVoiceTuneAudioProcessorEditor::~CanaryVoiceTuneAudioProcessorEditor() {
+  for (int i = 0; i < 88; ++i)
+    audioProcessor.apvts.removeParameterListener("KEY_" + juce::String(i), this);
+}
+
+void CanaryVoiceTuneAudioProcessorEditor::parameterChanged(const juce::String &parameterID, float newValue) {
+  juce::ignoreUnused(newValue);
+  if (parameterID.startsWith("KEY_")) {
+    juce::MessageManager::callAsync([this]() {
+      pianoKeyboard.repaint();
+    });
+  }
+}
 
 void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
   float w = (float) getWidth();

@@ -29,6 +29,91 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
 
 CanaryVoiceTuneAudioProcessor::~CanaryVoiceTuneAudioProcessor() {}
 
+int CanaryVoiceTuneAudioProcessor::getNumPrograms() {
+  return 25;
+}
+
+int CanaryVoiceTuneAudioProcessor::getCurrentProgram() {
+  return currentProgram;
+}
+
+const juce::String CanaryVoiceTuneAudioProcessor::getProgramName(int index) {
+  if (index == 0) return "Default (Chromatic)";
+  
+  int rootIdx = ((index - 1) / 2) % 12;
+  bool isMinor = ((index - 1) % 2 == 1);
+  
+  static const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+  juce::String name = noteNames[rootIdx];
+  name += isMinor ? " Minor" : " Major";
+  return name;
+}
+
+void CanaryVoiceTuneAudioProcessor::changeProgramName(int index, const juce::String &newName) {
+  juce::ignoreUnused(index, newName);
+}
+
+bool CanaryVoiceTuneAudioProcessor::isNoteEnabledForPreset(int presetIdx, int midiNote) const {
+  if (presetIdx <= 0 || presetIdx >= 25) return true; // Chromatic by default
+  
+  int rootIdx = ((presetIdx - 1) / 2) % 12;
+  bool isMinor = ((presetIdx - 1) % 2 == 1);
+  
+  int pitchClass = midiNote % 12;
+  int interval = (pitchClass - rootIdx + 12) % 12;
+  
+  if (isMinor) {
+    // Natural Minor: 0, 2, 3, 5, 7, 8, 10
+    return (interval == 0 || interval == 2 || interval == 3 || interval == 5 || interval == 7 || interval == 8 || interval == 10);
+  } else {
+    // Major: 0, 2, 4, 5, 7, 9, 11
+    return (interval == 0 || interval == 2 || interval == 4 || interval == 5 || interval == 7 || interval == 9 || interval == 11);
+  }
+}
+
+void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
+  if (index < 0 || index >= getNumPrograms()) return;
+  currentProgram = index;
+  
+  auto setParam = [this](const juce::String& paramId, float plainValue) {
+      if (auto* param = apvts.getParameter(paramId)) {
+          float normalized = param->convertTo0to1(plainValue);
+          param->setValueNotifyingHost(normalized);
+      }
+  };
+
+  if (index == 0) {
+      // Default (Chromatic)
+      setParam("ATTACK", 100.0f);
+      setParam("RELEASE", 250.0f);
+      setParam("RANGE", 0.0f);
+      setParam("VIBRATO", 1.0f);
+      setParam("EXCITER", 0.0f);
+      setParam("SIBILANTS", 0.0f);
+      setParam("BREATH", 0.0f);
+      setParam("POP", 0.0f);
+      
+      for (int i = 0; i < 88; ++i) {
+          setParam("KEY_" + juce::String(i), 1.0f); // true
+      }
+  } else {
+      // Harmonic Presets (C Major, C Minor, etc.)
+      setParam("ATTACK", 20.0f);
+      setParam("RELEASE", 150.0f);
+      setParam("RANGE", 90.0f);
+      setParam("VIBRATO", 0.8f);
+      setParam("EXCITER", 1.5f);
+      setParam("SIBILANTS", 0.0f);
+      setParam("BREATH", -35.0f);
+      setParam("POP", -12.0f);
+      
+      for (int i = 0; i < 88; ++i) {
+          bool enabled = isNoteEnabledForPreset(index, i + 21);
+          setParam("KEY_" + juce::String(i), enabled ? 1.0f : 0.0f);
+      }
+  }
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout
 CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
@@ -491,6 +576,7 @@ juce::AudioProcessorEditor *CanaryVoiceTuneAudioProcessor::createEditor() {
 void CanaryVoiceTuneAudioProcessor::getStateInformation(
     juce::MemoryBlock &destData) {
   auto state = apvts.copyState();
+  state.setProperty("currentProgram", currentProgram, nullptr);
   std::unique_ptr<juce::XmlElement> xml(state.createXml());
   copyXmlToBinary(*xml, destData);
 }
@@ -499,8 +585,12 @@ void CanaryVoiceTuneAudioProcessor::setStateInformation(const void *data,
                                                         int sizeInBytes) {
   std::unique_ptr<juce::XmlElement> xmlState(
       getXmlFromBinary(data, sizeInBytes));
-  if (xmlState && xmlState->hasTagName(apvts.state.getType()))
-    apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+  if (xmlState && xmlState->hasTagName(apvts.state.getType())) {
+    auto tree = juce::ValueTree::fromXml(*xmlState);
+    apvts.replaceState(tree);
+    if (tree.hasProperty("currentProgram"))
+      currentProgram = static_cast<int>(tree.getProperty("currentProgram"));
+  }
 }
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
