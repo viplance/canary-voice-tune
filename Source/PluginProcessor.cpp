@@ -19,6 +19,7 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
   releaseParam   = apvts.getRawParameterValue("RELEASE");
   rangeParam     = apvts.getRawParameterValue("RANGE");
   vibratoParam   = apvts.getRawParameterValue("VIBRATO");
+  exciterParam   = apvts.getRawParameterValue("EXCITER");
   sibilantsParam = apvts.getRawParameterValue("SIBILANTS");
   breathParam    = apvts.getRawParameterValue("BREATH");
   popParam       = apvts.getRawParameterValue("POP");
@@ -46,6 +47,9 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Sibilants: high-shelf gain around 7 kHz for "s/sh/t" presence.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
+  // Exciter: harmonic enhancer level (0.0 dB to 6.0 dB)
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"EXCITER", 1}, "Exciter", 0.0f, 6.0f, 0.0f));
   // Breath Gate: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"BREATH", 1}, "Breath", -48.0f, 0.0f, 0.0f));
@@ -364,6 +368,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float releaseMs          = releaseParam  ? releaseParam->load()  : 100.0f;
   float correctionStrength = (rangeParam   ? rangeParam->load()    : 0.0f) / 100.0f;
   float vibratoAmount      = vibratoParam ? vibratoParam->load() : 1.0f;
+  float exciterDb          = exciterParam  ? exciterParam->load()  : 0.0f;
   float sibilantsDb        = sibilantsParam? sibilantsParam->load(): 0.0f;
   float breathDb           = breathParam   ? breathParam->load()   : 0.0f;
   float popMaxDb           = popParam      ? popParam->load()      : 0.0f;
@@ -456,6 +461,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   juce::ignoreUnused(consonantFastRelease);
   pitchShifter.setTargetShift(targetRatio, attackMs, effectiveReleaseMs,
                               isVoiced, detectedHz, vibratoAmount);
+  pitchShifter.setExciter(exciterDb, isConsonant);
   pitchShifter.setToneShaping(sibilantsDb, 0.0f);
   pitchShifter.setBreathGate(breathDb, isBreath);
   pitchShifter.setPopFilter(popMaxDb);

@@ -33,6 +33,7 @@ public:
                         bool isVoiced, float detectedHz, float vibratoAmount);
 
     void setToneShaping(float sibilantsDb, float breathDb);
+    void setExciter(float exciterDb, bool isConsonant);
     void setPopFilter(float thresholdDb);
     void setBreathGate(float thresholdDb, bool isBreathDetected);
     void triggerOnsetFade(float fadeMs);
@@ -88,6 +89,12 @@ private:
     std::vector<bool> breathGateDelay;
     int breathBlockIndex = 0;
     int blockSize = 0;
+
+    // Exciter (Harmonic Enhancer)
+    float exciterDb = 0.0f;
+    bool isConsonantActive = false;
+    std::array<juce::dsp::IIR::Filter<float>, kMaxChans> exciterCrossover;
+    std::array<juce::dsp::IIR::Filter<float>, kMaxChans> exciterHarmonicFilter;
 
 
 

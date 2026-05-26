@@ -34,6 +34,9 @@ public:
   //   3. YIN tau-minimum depth (shallow when no clear periodicity).
   bool isConsonant() const { return consonantFlag; }
   bool isBreath() const { return breathFlag; }
+  float getZcr() const { return lastZcr; }
+  float getHfRatio() const { return lastHfRatio; }
+  float getYinMinValue() const { return lastYinMinValue; }
 
 
 private:
@@ -69,6 +72,8 @@ private:
   // mean normalisation). Used as a "voiced-ness" proxy: deep minima are
   // characteristic of a vowel, shallow ones of an unvoiced consonant.
   float lastYinMinValue = 1.0f;
+  float lastZcr = 0.0f;
+  float lastHfRatio = 0.0f;
 
   // Short median filter on recent raw pitches, to suppress single-frame
   // octave jumps (one aberrant detection in three is rejected).

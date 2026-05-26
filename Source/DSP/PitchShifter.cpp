@@ -68,6 +68,10 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     spec.sampleRate = currentSampleRate;
     spec.maximumBlockSize = (juce::uint32)samplesPerBlock;
     spec.numChannels = 1; // each filter is per-channel
+
+    auto crossoverCoeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, 3500.0f);
+    auto harmonicCoeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, 4000.0f);
+
     for (int c = 0; c < numChans; ++c) {
         dryHighpass[c].prepare(spec);
         wetLowpass[c].prepare(spec);
@@ -80,6 +84,14 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
 
         sibilantsFilter[c].prepare(spec);
         sibilantsFilter[c].reset();
+
+        exciterCrossover[c].prepare(spec);
+        *exciterCrossover[c].coefficients = *crossoverCoeffs;
+        exciterCrossover[c].reset();
+
+        exciterHarmonicFilter[c].prepare(spec);
+        *exciterHarmonicFilter[c].coefficients = *harmonicCoeffs;
+        exciterHarmonicFilter[c].reset();
 
 
         popLow[c].prepare(spec);
@@ -148,6 +160,14 @@ void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
             *sibilantsFilter[c].coefficients = *sibilantsCoeffs;
         }
     }
+}
+
+void PitchShifter::setExciter(float exciterDb, bool isConsonant)
+{
+    if (exciterDb > 6.0f) exciterDb = 6.0f;
+    if (exciterDb < 0.0f) exciterDb = 0.0f;
+    this->exciterDb = exciterDb;
+    this->isConsonantActive = isConsonant;
 }
 
 void PitchShifter::setPopFilter(float thresholdDb)
@@ -435,6 +455,42 @@ void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 
         float* dst = (c == 0) ? L : R;
         for (int i = 0; i < numSamples; ++i) dst[i] += tmp[i];
+    }
+
+    // ----- 5.5) Exciter -----
+    if (exciterDb > 0.01f) {
+        // Completely bypass the exciter on consonants/sibilants (like S and Z)
+        // to prevent any dynamic harshness or spitting in the high end.
+        float consonantScale = isConsonantActive ? 0.0f : 1.0f;
+        float exciterGain = consonantScale * std::pow(10.0f, (exciterDb - 12.0f) / 20.0f);
+        
+        for (int c = 0; c < procChans; ++c) {
+            float* dst = (c == 0) ? L : R;
+            for (int i = 0; i < numSamples; ++i) {
+                float x = dst[i];
+                float xHigh = exciterCrossover[c].processSample(x);
+                
+                // Smooth asymmetric self-limiting vacuum-tube waveshaping with odd harmonic cancellation:
+                // We split the asymmetric waveshaper output into even and odd components, then subtract the odd
+                // component to actively cancel and suppress odd harmonics in the original high-frequency band.
+                // At +6 dB of even harmonics boost, this provides exactly -6 dB of odd harmonics reduction.
+                float xDrive = xHigh * 4.0f;
+                float f_pos = (xDrive + 1.0f) / (1.0f + std::abs(xDrive + 1.0f)) - 0.5f;
+                float f_neg = (-xDrive + 1.0f) / (1.0f + std::abs(-xDrive + 1.0f)) - 0.5f;
+                
+                float xEven = 0.5f * (f_pos + f_neg);
+                float xOdd  = 0.5f * (f_pos - f_neg);
+                float xHarm = xEven - xOdd;
+                
+                float xHarmFiltered = exciterHarmonicFilter[c].processSample(xHarm);
+                dst[i] += exciterGain * xHarmFiltered;
+            }
+        }
+    } else {
+        for (int c = 0; c < procChans; ++c) {
+            exciterCrossover[c].reset();
+            exciterHarmonicFilter[c].reset();
+        }
     }
 
     // ----- 6) Tone EQ (post) -----

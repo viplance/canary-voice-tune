@@ -24,6 +24,8 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   breathFlag = false;
   breathBlockCounter = 0;
   lastYinMinValue = 1.0f;
+  lastZcr = 0.0f;
+  lastHfRatio = 0.0f;
 
   // 1-pole HPF with -3 dB at ~2.5 kHz. Coefficient form:
   //   y[n] = alpha * (y[n-1] + x[n] - x[n-1])
@@ -103,6 +105,8 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   hpfState = prevX;
   float zcr      = (numSamples > 0) ? (float)zeroCrossings / (float)numSamples : 0.0f;
   float hfRatio  = (blockEnergy > 1e-9f) ? (highEnergy / blockEnergy) : 0.0f;
+  lastZcr = zcr;
+  lastHfRatio = hfRatio;
 
   float rawPitch = 0.0f;
   if (rms > 0.01f) {
@@ -117,9 +121,9 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   //   zcr > 0.20            -> fricative/sibilant (s, sh, f, th)
   //   hfRatio > 0.55        -> high-band-heavy unvoiced consonant
   //   yinMinValue > 0.45    -> no clear periodicity in the YIN search
-  bool loudEnough  = (rms > 0.02f);
-  bool unvoicedLike = (zcr > 0.20f) || (hfRatio > 0.55f)
-                  || (lastYinMinValue > 0.45f && rawPitch <= 0.0f);
+  bool loudEnough  = (rms > 0.015f);
+  bool unvoicedLike = (zcr > 0.10f) || (hfRatio > 0.10f)
+                  || (lastYinMinValue > 0.40f && rawPitch <= 0.0f);
   consonantFlag = loudEnough && unvoicedLike;
 
   // ---- Breath detection (3-band Crossover energy analysis) ----------------

@@ -29,6 +29,7 @@ private:
   RotaryKnob releaseKnob;
   RotaryKnob rangeKnob;
   RotaryKnob vibratoKnob;
+  RotaryKnob exciterKnob;
   RotaryKnob sibilantsKnob;
   RotaryKnob breathKnob;
   RotaryKnob popKnob;
@@ -41,6 +42,8 @@ private:
       rangeAttachment;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
       vibratoAttachment;
+  std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+      exciterAttachment;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
       sibilantsAttachment;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
