@@ -68,7 +68,8 @@ juce::Rectangle<int> PianoKeyboard::getKeyBounds(int note)
 
 void PianoKeyboard::paint (juce::Graphics& g)
 {
-    g.fillAll(juce::Colour::fromRGB(255, 239, 0));
+    // Draw the keyboard background as transparent/soft beige
+    g.fillAll(juce::Colours::transparentBlack);
 
     // Draw white keys first
     for (int i = 0; i < 88; ++i)
@@ -79,12 +80,31 @@ void PianoKeyboard::paint (juce::Graphics& g)
         auto param = apvts.getParameter("KEY_" + juce::String(i));
         bool enabled = param ? param->getValue() > 0.5f : true;
 
-        juce::Colour keyColor = enabled ? juce::Colours::white : juce::Colours::darkgrey;
-        if (i == currentlyDetectedNote && enabled) keyColor = juce::Colour::fromRGB(0, 200, 255); // Highlight
+        juce::ColourGradient keyGrad (
+            juce::Colours::white, 0.0f, (float)bounds.getY(),
+            juce::Colour::fromRGB(246, 240, 226), 0.0f, (float)bounds.getBottom(),
+            false);
 
+        juce::Colour keyColor = enabled ? juce::Colour::fromRGB(250, 246, 234) : juce::Colour::fromRGB(215, 208, 194);
+        
         g.setColour(keyColor);
+        if (enabled) {
+            g.setGradientFill(keyGrad);
+        }
         g.fillRect(bounds);
-        g.setColour(juce::Colours::black);
+
+        // Highlight currently detected note with Canary Gold glow
+        if (i == currentlyDetectedNote && enabled) {
+            juce::ColourGradient highlightGrad (
+                juce::Colour::fromRGB(255, 210, 40), 0.0f, (float)bounds.getY(),
+                juce::Colour::fromRGB(235, 155, 10), 0.0f, (float)bounds.getBottom(),
+                false);
+            g.setGradientFill(highlightGrad);
+            g.fillRect(bounds);
+        }
+
+        // Draw soft, premium warm-grey white-key border
+        g.setColour(juce::Colour::fromRGB(205, 195, 178));
         g.drawRect(bounds, 1);
     }
 
@@ -97,12 +117,28 @@ void PianoKeyboard::paint (juce::Graphics& g)
         auto param = apvts.getParameter("KEY_" + juce::String(i));
         bool enabled = param ? param->getValue() > 0.5f : true;
 
-        juce::Colour keyColor = enabled ? juce::Colours::black : juce::Colours::darkgrey.darker();
-        if (i == currentlyDetectedNote && enabled) keyColor = juce::Colour::fromRGB(0, 200, 255); // Highlight
-
+        juce::Colour keyColor = enabled ? juce::Colour::fromRGB(45, 41, 37) : juce::Colour::fromRGB(95, 88, 80);
+        
         g.setColour(keyColor);
         g.fillRect(bounds);
-        g.setColour(juce::Colours::white.withAlpha(0.2f));
+
+        // Highlight currently detected note with Canary Gold glow
+        if (i == currentlyDetectedNote && enabled) {
+            juce::ColourGradient highlightGrad (
+                juce::Colour::fromRGB(255, 210, 40), 0.0f, (float)bounds.getY(),
+                juce::Colour::fromRGB(235, 155, 10), 0.0f, (float)bounds.getBottom(),
+                false);
+            g.setGradientFill(highlightGrad);
+            g.fillRect(bounds);
+        }
+
+        // Elegant top-edge highlight on black keys
+        if (enabled && i != currentlyDetectedNote) {
+            g.setColour(juce::Colours::white.withAlpha(0.12f));
+            g.drawRect(bounds.withHeight(2), 1);
+        }
+
+        g.setColour(juce::Colour::fromRGB(25, 22, 20));
         g.drawRect(bounds, 1);
     }
 }

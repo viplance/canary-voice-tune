@@ -16,28 +16,33 @@ void ModernRotaryLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     auto rw = radius * 2.0f;
     auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // Track
-    g.setColour (juce::Colour::fromRGB(40, 42, 50));
-    g.fillEllipse (rx, ry, rw, rw);
+    // Premium Neo-Skeuomorphic cream/beige knob face
+    juce::ColourGradient knobFace (
+        juce::Colour::fromRGB(255, 255, 255), centreX - radius * 0.4f, centreY - radius * 0.4f,
+        juce::Colour::fromRGB(222, 215, 198), centreX + radius * 0.7f, centreY + radius * 0.7f,
+        true);
+    g.setGradientFill(knobFace);
+    g.fillEllipse(rx, ry, rw, rw);
 
-    g.setColour (juce::Colour::fromRGB(25, 27, 32));
-    g.drawEllipse (rx, ry, rw, rw, 2.0f);
+    // Bevel highlights & shadow borders for visual depth
+    g.setColour(juce::Colours::white.withAlpha(0.85f));
+    g.drawEllipse(rx + 0.5f, ry + 0.5f, rw - 1.0f, rw - 1.0f, 1.0f);
+    g.setColour(juce::Colour::fromRGB(185, 177, 160).withAlpha(0.6f));
+    g.drawEllipse(rx, ry, rw, rw, 1.5f);
 
-    // Fill
-    juce::Path p;
-    auto pointerLength = radius * 0.33f;
-    auto pointerThickness = 3.0f;
-    p.addRectangle (-pointerThickness * 0.5f, -radius, pointerThickness, pointerLength);
-    p.applyTransform (juce::AffineTransform::rotation (angle).translated (centreX, centreY));
+    // Dynamic golden pointer dot (elegant and clean)
+    float dotRadius = 2.5f;
+    float dotDist = radius - 7.0f;
+    float dotX = centreX + std::cos(angle - juce::MathConstants<float>::halfPi) * dotDist;
+    float dotY = centreY + std::sin(angle - juce::MathConstants<float>::halfPi) * dotDist;
+    g.setColour(juce::Colour::fromRGB(205, 150, 20)); // Canary-gold
+    g.fillEllipse(dotX - dotRadius, dotY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
 
-    // Glow / highlight
-    g.setColour (juce::Colour::fromRGB(0, 200, 255));
-    g.fillPath (p);
-
-    // Outline arc
+    // Outer progress arc (shows current value level in soft gold)
     juce::Path arc;
-    arc.addCentredArc(centreX, centreY, radius - 2.0f, radius - 2.0f, 0.0f, rotaryStartAngle, angle, true);
-    g.strokePath(arc, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    arc.addCentredArc(centreX, centreY, radius - 3.5f, radius - 3.5f, 0.0f, rotaryStartAngle, angle, true);
+    g.setColour(juce::Colour::fromRGB(220, 165, 30));
+    g.strokePath(arc, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 RotaryKnob::RotaryKnob()
@@ -46,7 +51,7 @@ RotaryKnob::RotaryKnob()
     setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 20);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour (juce::Slider::textBoxTextColourId, juce::Colours::black);
+    setColour (juce::Slider::textBoxTextColourId, juce::Colour::fromRGB(95, 80, 65)); // Warm gold-bronze
 }
 
 RotaryKnob::~RotaryKnob()
