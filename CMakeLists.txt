@@ -45,6 +45,8 @@ target_sources(CanaryVoiceTune PRIVATE
     Source/UI/RotaryKnob.h
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
+    Source/DSP/NoteSelector.cpp
+    Source/DSP/NoteSelector.h
     Source/DSP/PitchShifterBase.h
     Source/DSP/ModernPitchShifter.cpp
     Source/DSP/ModernPitchShifter.h
@@ -124,8 +126,12 @@ target_sources(CanaryVoiceTune_Tests PRIVATE
     test/Test_OctaveJump.cpp
     test/Test_HighlightOctave.h
     test/Test_HighlightOctave.cpp
+    test/Test_NoteSelector.h
+    test/Test_NoteSelector.cpp
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
+    Source/DSP/NoteSelector.cpp
+    Source/DSP/NoteSelector.h
     Source/DSP/PitchShifterBase.h
     Source/DSP/ModernPitchShifter.cpp
     Source/DSP/ModernPitchShifter.h

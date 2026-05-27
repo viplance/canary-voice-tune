@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DSP/NoteSelector.h"
 
 CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -273,16 +274,14 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // follows the singer closely.
   float lockPitch    = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
   float hysteresisSt = 0.1f + 0.5f * correctionStrength;
-  int   bestMidi     = -1;
-  float minDist      = 1e9f;
-  for (int testMidi = 21; testMidi <= 108; ++testMidi) {
-    if (! activeKeys[testMidi - 21]) continue;
-    float d = std::abs(lockPitch - (float)testMidi);
-    // Give the incumbent locked note a "discount" so a challenger must be
-    // genuinely closer, not merely tied, to take its place.
-    if (testMidi == lockedMidi) d -= hysteresisSt;
-    if (d < minDist) { minDist = d; bestMidi = testMidi; }
-  }
+  // Pick the enabled key closest in pitch to the detected note. The selection
+  // is symmetric — it never prefers the higher or lower neighbour — so when
+  // several disabled keys separate two enabled ones, the switch happens at the
+  // true midpoint between them (e.g. with only C and E enabled, C#→C, D#→E).
+  // The incumbent gets a symmetric stick-band of `hysteresisSt` semitones at
+  // that midpoint to suppress flicker from pitch jitter.
+  int bestMidi = NoteSelector::chooseActiveNote(activeKeys, lockPitch,
+                                                lockedMidi, hysteresisSt);
   if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
 
   // ---- Note lock ----------------------------------------------------------
@@ -333,13 +332,12 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   float engageFade = juce::jlimit(0.0f, 1.0f,
                                   1000.0f * (float)lockEngageSamples / sr / attackMs);
   float lockBypass = 1.0f - engageFade;
-  if (lockedMidi >= 0) {
-    float drift = std::abs(effectiveMidi - (float)lockedMidi);
-    // Within ~1 semitone of the lock, snap to the lock. Beyond that, follow
-    // the nearest active key so a sustained off-key pitch is still corrected
-    // (the lock itself re-arms after 120 ms of sustained drift, above).
-    if (drift <= 1.0f) bestMidi = lockedMidi;
-  }
+  // Incumbent stickiness is now handled symmetrically and spacing-aware inside
+  // NoteSelector::chooseActiveNote (above), so the previous fixed "snap to the
+  // lock within ±1 semitone" override is removed: it ignored where the nearest
+  // *enabled* neighbour actually sits and could keep the lock even when a
+  // closer enabled key existed, biasing the choice. `bestMidi` already is the
+  // closest enabled key with hysteresis applied.
 
   // ---- Compute the ratio --------------------------------------------------
   // Target is always an active key (with `correctionStrength` controlling how

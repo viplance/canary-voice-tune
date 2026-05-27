@@ -5,6 +5,7 @@
 #include "Test_ClassicClick.h"
 #include "Test_OctaveJump.h"
 #include "Test_HighlightOctave.h"
+#include "Test_NoteSelector.h"
 #include "TestHelpers.h"
 #include "../Source/DSP/PitchDetector.h"
 #include <iostream>
@@ -96,6 +97,9 @@ int main(int argc, char* argv[]) {
     // Run Keyboard Highlight Octave-Stability Test (Test 7)
     std::cout << "\nTest 7: Verifying keyboard-highlight octave stability on jump_notes.wav" << std::endl;
     runHighlightOctaveTest("test/samples/jump_notes.wav");
+
+    // Run Active-Note Selection Test (Test 8)
+    runNoteSelectorTests();
 
     std::cout << "\nAll tests PASSED successfully!" << std::endl;
     return 0;
