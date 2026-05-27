@@ -97,6 +97,30 @@ void runNoteSelectorTests()
     expectNote("no enabled keys -> -1",
                NoteSelector::chooseActiveNote(none.data(), 62.0f, -1, hyst), -1);
 
+    // --- Chromatic regression (the Range=100 bug) ---------------------------
+    // Every key enabled. A pitch sitting exactly ON a note must select THAT
+    // note, even with a large hysteresis — the incumbent must never stick a
+    // whole semitone away. (Old code with hyst=0.6 returned C for a C# pitch.)
+    KeyMask chrom({});
+    for (int m = 21; m <= 108; ++m) chrom.keys[m - kLowMidi] = true;
+    const float bigHyst = 0.6f; // the value the old Range=100 produced
+    expectNote("chromatic: C# pitch on the note, incumbent C, big hyst -> C#",
+               NoteSelector::chooseActiveNote(chrom.data(), 61.0f, 60, bigHyst), 61);
+    expectNote("chromatic: B pitch on the note, incumbent C, big hyst -> B",
+               NoteSelector::chooseActiveNote(chrom.data(), 59.0f, 60, bigHyst), 59);
+
+    // Pitch that has skipped PAST the incumbent's neighbour must release the
+    // incumbent immediately (no drag-back across an intermediate note).
+    expectNote("chromatic: pitch at D, incumbent C, big hyst -> D (not C)",
+               NoteSelector::chooseActiveNote(chrom.data(), 62.0f, 60, bigHyst), 62);
+
+    // Within a single semitone step, the small stick-band still suppresses
+    // flicker right at the midpoint but releases just past it.
+    expectNote("chromatic: 60.6 incumbent C (within 0.15 band) holds C",
+               NoteSelector::chooseActiveNote(chrom.data(), 60.6f, 60, 0.15f), 60);
+    expectNote("chromatic: 60.7 incumbent C (past 0.15 band) -> C#",
+               NoteSelector::chooseActiveNote(chrom.data(), 60.7f, 60, 0.15f), 61);
+
     if (failures == 0) {
         std::cout << "  RESULT: PASS (Closest-in-pitch selection is symmetric and flicker-free)" << std::endl;
     } else {

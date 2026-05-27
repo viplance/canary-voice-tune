@@ -273,7 +273,15 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // correction the hysteresis is minimal so the displayed note still
   // follows the singer closely.
   float lockPitch    = (smoothedMidi > 0.0f) ? smoothedMidi : effectiveMidi;
-  float hysteresisSt = 0.1f + 0.5f * correctionStrength;
+  // Note-selection hysteresis is a small FIXED stick-band, independent of the
+  // Range knob. It used to scale with correctionStrength (0.1 + 0.5*strength),
+  // which at Range=100 produced 0.6 semitones — larger than the 0.5-semitone
+  // half-distance between two adjacent (e.g. chromatic) notes. That made the
+  // incumbent stick past its own boundary and the displayed note jump/flicker.
+  // Range now controls only the correction strength (the pull-to-note amount),
+  // not how the note is chosen. The fixed value matches the old Range=0 case
+  // (0.1 + 0.5*0 = 0.1), so behaviour at Range 0 is unchanged.
+  const float hysteresisSt = 0.1f;
   // Pick the enabled key closest in pitch to the detected note. The selection
   // is symmetric — it never prefers the higher or lower neighbour — so when
   // several disabled keys separate two enabled ones, the switch happens at the
