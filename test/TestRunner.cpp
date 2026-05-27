@@ -3,6 +3,7 @@
 #include "Test_Exciter.h"
 #include "Test_NoteMapping.h"
 #include "Test_ClassicClick.h"
+#include "Test_OctaveJump.h"
 #include "TestHelpers.h"
 #include "../Source/DSP/PitchDetector.h"
 #include <iostream>
@@ -80,6 +81,10 @@ int main(int argc, char* argv[]) {
     // Run Classic Click Test (Test 5)
     std::cout << "\nTest 5: Verifying Classic Mode Attack 0 / Release 0 Click-Free Onset on dynamic_solo.wav" << std::endl;
     runClassicClickTest("test/samples/dynamic_solo.wav");
+
+    // Run Octave Jump Test (Test 6)
+    std::cout << "\nTest 6: Verifying Octave-Down Prevention on jump_notes.wav" << std::endl;
+    runOctaveJumpTest("test/samples/jump_notes.wav");
 
     std::cout << "\nAll tests PASSED successfully!" << std::endl;
     return 0;

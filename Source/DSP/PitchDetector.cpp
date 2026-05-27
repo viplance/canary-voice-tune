@@ -196,23 +196,9 @@ float PitchDetector::process(const float *audioData, int numSamples) {
 
 
   if (rawPitch > 0.0f) {
-    // Octave correction against history. YIN is most prone to picking the
-    // 2× harmonic when the fundamental is weak, or the 0.5× sub-harmonic
-    // when window length lets a half-period fit. Compare against the
-    // long-term lastValidPitch and snap obvious octaves back into place.
-    if (lastValidPitch > 0.0f) {
-      float r = rawPitch / lastValidPitch;
-      // Up an octave?
-      if (r > 1.7f && r < 2.3f) {
-        rawPitch *= 0.5f;
-      }
-      // Down an octave?
-      else if (r > 0.43f && r < 0.6f) {
-        rawPitch *= 2.0f;
-      }
-      // 3:2 / 2:3 — perfect-fifth confusions sometimes happen on whistled
-      // tones; don't auto-correct those, they're usually genuine.
-    }
+    // Octave correction against history is deprecated and disabled to prevent feedback lock-ins.
+    // The robust YIN divisor-snapping (Steps 4b and 4c) and the 5-frame median filter
+    // are sufficient to prevent octave drops and smooth out single-frame tracking errors.
 
     // Push the (possibly corrected) raw pitch through a 5-frame median
     // filter to reject single-frame outliers.
@@ -341,9 +327,9 @@ float PitchDetector::getPitchYin() {
         if (yinBuffer[t] < bestV) { bestV = yinBuffer[t]; bestT = t; }
       }
       // Require the long-tau minimum to be clearly deeper (≤ 70% of the
-      // short-tau value). This catches genuine 2nd-harmonic captures while
-      // leaving clean sine tones untouched.
-      if (bestV < curVal * 0.7f && bestV < 0.15f) {
+      // short-tau value) and only switch if the short-tau minimum is not
+      // already extremely clean (curVal > 0.35f).
+      if (curVal > 0.35f && bestV < curVal * 0.7f && bestV < 0.15f) {
         tauEstimate = bestT;
       }
     }
@@ -355,6 +341,13 @@ float PitchDetector::getPitchYin() {
   // we check if a shorter period (tauEstimate / divisor) has a
   // reasonably deep local minimum. If so, we snap back to the higher octave.
   if (tauEstimate > 0) {
+    float curVal = yinBuffer[tauEstimate];
+    // We want to prevent locking onto an octave below the true fundamental (octave-down error).
+    // However, if the current period's minimum is already extremely clean (curVal <= 0.15f),
+    // we must be cautious not to snap to a harmonic (octave-up error).
+    // Thus, if curVal <= 0.15f, we require the shorter period to have a highly confident
+    // local minimum (bestSubV < 0.35f). Otherwise, we allow a standard threshold (bestSubV < 0.50f).
+    float allowedSubThreshold = (curVal <= 0.15f) ? 0.35f : 0.50f;
     for (int divisor = 4; divisor >= 2; --divisor) {
       int subTau = tauEstimate / divisor;
       if (subTau >= 10) { // Keep period reasonable (e.g. >10 samples)
@@ -375,10 +368,10 @@ float PitchDetector::getPitchYin() {
         bool isLocalMin = (bestSubT > 1 && bestSubT < halfBufferSize - 1 &&
                            yinBuffer[bestSubT] <= yinBuffer[bestSubT - 1] &&
                            yinBuffer[bestSubT] <= yinBuffer[bestSubT + 1]);
-                           
-        // If it is a clean local minimum with a decent depth (e.g. < 0.35),
+                            
+        // If it is a clean local minimum with a decent depth,
         // we assume the shorter period is the true fundamental.
-        if (isLocalMin && bestSubV < 0.35f) {
+        if (isLocalMin && bestSubV < allowedSubThreshold) {
           tauEstimate = bestSubT;
           break; // Snapped to the shortest valid divisor (highest pitch)
         }
