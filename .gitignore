@@ -24,3 +24,6 @@ Thumbs.db
 
 # Dependencies
 node_modules/
+
+# Test artifacts
+test/result/

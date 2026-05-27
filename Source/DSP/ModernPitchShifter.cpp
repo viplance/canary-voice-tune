@@ -127,7 +127,7 @@ void ModernPitchShifter::setTargetShift(float ratio, float attackMs, float relea
 
     float target = isVoiced ? currentRatio : 1.0f;
     float timeMs = isVoiced ? attackMs : 5.0f; // Fixed extremely fast 5ms release to prevent "quacking"
-    float fastMs = 12.0f;
+    float fastMs = 3.0f;
     float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
     if (trackingMs < 1.0f) trackingMs = 1.0f;
     float timeS = trackingMs / 1000.0f;

@@ -46,7 +46,7 @@ private:
     std::array<double, kMaxChans> absoluteOutputAddr;
     std::array<double, kMaxChans> crossFadeOutputAddr;
     std::array<float, kMaxChans> crossFadeGain;
-    static constexpr int kCrossFadeDuration = 64;
+    static constexpr int kCrossFadeDuration = 256;
     
     // Voiced tracking
     bool isVoiced_ = false;

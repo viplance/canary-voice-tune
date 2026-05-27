@@ -106,7 +106,7 @@ void ClassicPitchShifter::setTargetShift(float ratio, float attackMs, float rele
 
     float target = isVoiced_ ? currentRatio : 1.0f;
     float timeMs = isVoiced_ ? attackMs : 5.0f; // Fixed extremely fast 5ms release to prevent "quacking"
-    float fastMs = 12.0f;
+    float fastMs = 3.0f;
     float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
     if (trackingMs < 1.0f) trackingMs = 1.0f;
     float timeS = trackingMs / 1000.0f;
@@ -137,7 +137,7 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
         targetPeriod = juce::jlimit(minPeriod, maxPeriod, rawPeriod);
     }
 
-    constexpr int kGuardSamples = 8;
+    constexpr int kGuardSamples = 64;
 
     for (int i = 0; i < numSamples; ++i) {
         // Write the incoming sample to the circular history buffer
@@ -178,7 +178,7 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                     wasVoicedState[c] = true;
                     double targetVoicedAddr = (double)(absoluteWritePos - (int64_t)period - kGuardSamples);
                     
-                    crossFadeOutputAddr[c] = absoluteOutputAddr[c];
+                    crossFadeOutputAddr[c] = absoluteOutputAddr[c] + r;
                     crossFadeGain[c] = 1.0f;
                     absoluteOutputAddr[c] = targetVoicedAddr;
                     samplesSinceLastJump[c] = 0; // Reset jump counter on onset

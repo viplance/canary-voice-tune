@@ -109,7 +109,17 @@ juce_add_console_app(CanaryVoiceTune_Tests
 )
 
 target_sources(CanaryVoiceTune_Tests PRIVATE
-    test/Tests.cpp
+    test/TestRunner.cpp
+    test/TestHelpers.h
+    test/TestHelpers.cpp
+    test/Test_BreathGate.h
+    test/Test_BreathGate.cpp
+    test/Test_Exciter.h
+    test/Test_Exciter.cpp
+    test/Test_NoteMapping.h
+    test/Test_NoteMapping.cpp
+    test/Test_ClassicClick.h
+    test/Test_ClassicClick.cpp
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
     Source/DSP/PitchShifterBase.h
