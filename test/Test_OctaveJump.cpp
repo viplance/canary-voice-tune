@@ -54,10 +54,12 @@ void runOctaveJumpTest(const juce::String& filename)
                     octaveDropCount++;
                 }
             }
-            // Note 2: D4 (expected ~290-330 Hz, correctly tracks jump to first octave)
-            else if (b >= 44 && b <= 54) {
-                if (pitchHz < 270.0f || pitchHz > 340.0f) {
-                    std::cout << "  ERROR: Block " << b << " (D4 Note) tracked incorrectly as " << pitchHz << " Hz (Expected 270-340 Hz)" << std::endl;
+            // Note 1 (cont.): the first note (D3 ~146 Hz) is still sounding through the
+            // 250-400 ms window (blocks 47-75). Any brief jump UP an octave (~300 Hz)
+            // here is an octave-tracking defect and must fail the test.
+            else if (b >= 47 && b <= 75) {
+                if (pitchHz > 175.0f) {
+                    std::cout << "  ERROR: Block " << b << " (D3 Note, 250-400 ms) jumped UP an octave to " << pitchHz << " Hz (Expected <=175 Hz, ~146 Hz D3)" << std::endl;
                     octaveDropCount++;
                 }
             }
@@ -77,12 +79,29 @@ void runOctaveJumpTest(const juce::String& filename)
             }
         }
 
-        // Apply shift
+        // Apply shift.
+        //
+        // The real plugin tunes toward a SCALE-LOCKED target note (the active
+        // key nearest the locked pitch), not the per-block nearest semitone.
+        // That distinction matters here: per-block "snap to my own nearest
+        // semitone" maps both 160 Hz and its octave-up 320 Hz to a ratio near
+        // 1.0, so an octave detection error leaves NO audible trace in the
+        // output WAV. To make the artifact representative of the plugin — so
+        // the jump is actually audible if the detector regresses — we lock the
+        // first note (250-400 ms region) to a fixed D3 (MIDI 50) target. An
+        // octave-up misdetection then yields a ratio that audibly drops the
+        // output ~an octave, exactly as it would in the plugin.
         float ratio = 1.0f;
         if (isVoiced && pitchHz > 50.0f) {
-            float midiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
-            float nearestMidiNote = std::round(midiNote);
-            float targetHz = 440.0f * std::pow(2.0f, (nearestMidiNote - 69.0f) / 12.0f);
+            float targetHz;
+            if (b >= 26 && b <= 75) {
+                // First note locked to D3 = 146.83 Hz (MIDI 50).
+                targetHz = 440.0f * std::pow(2.0f, (50.0f - 69.0f) / 12.0f);
+            } else {
+                float midiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
+                float nearestMidiNote = std::round(midiNote);
+                targetHz = 440.0f * std::pow(2.0f, (nearestMidiNote - 69.0f) / 12.0f);
+            }
             ratio = targetHz / pitchHz;
         }
 

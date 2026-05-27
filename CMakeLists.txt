@@ -122,6 +122,8 @@ target_sources(CanaryVoiceTune_Tests PRIVATE
     test/Test_ClassicClick.cpp
     test/Test_OctaveJump.h
     test/Test_OctaveJump.cpp
+    test/Test_HighlightOctave.h
+    test/Test_HighlightOctave.cpp
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
     Source/DSP/PitchShifterBase.h

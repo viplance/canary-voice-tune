@@ -4,10 +4,12 @@
 #include "Test_NoteMapping.h"
 #include "Test_ClassicClick.h"
 #include "Test_OctaveJump.h"
+#include "Test_HighlightOctave.h"
 #include "TestHelpers.h"
 #include "../Source/DSP/PitchDetector.h"
 #include <iostream>
 #include <cmath>
+#include <cstdlib>
 
 void analyzeFile(const juce::String& filename) {
     double sampleRate = 0.0;
@@ -16,7 +18,12 @@ void analyzeFile(const juce::String& filename) {
     
     PitchDetector detector;
     int block_size = 256;
+    if (const char* bsEnv = std::getenv("ANALYZE_BLOCK_SIZE")) {
+        int v = std::atoi(bsEnv);
+        if (v > 0) block_size = v;
+    }
     detector.prepare(sampleRate, block_size);
+    std::cout << "(analysis block_size = " << block_size << ")" << std::endl;
     
     int numBlocks = numSamples / block_size;
     std::cout << "\n===========================================" << std::endl;
@@ -85,6 +92,10 @@ int main(int argc, char* argv[]) {
     // Run Octave Jump Test (Test 6)
     std::cout << "\nTest 6: Verifying Octave-Down Prevention on jump_notes.wav" << std::endl;
     runOctaveJumpTest("test/samples/jump_notes.wav");
+
+    // Run Keyboard Highlight Octave-Stability Test (Test 7)
+    std::cout << "\nTest 7: Verifying keyboard-highlight octave stability on jump_notes.wav" << std::endl;
+    runHighlightOctaveTest("test/samples/jump_notes.wav");
 
     std::cout << "\nAll tests PASSED successfully!" << std::endl;
     return 0;

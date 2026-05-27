@@ -342,12 +342,32 @@ float PitchDetector::getPitchYin() {
   // reasonably deep local minimum. If so, we snap back to the higher octave.
   if (tauEstimate > 0) {
     float curVal = yinBuffer[tauEstimate];
-    // We want to prevent locking onto an octave below the true fundamental (octave-down error).
-    // However, if the current period's minimum is already extremely clean (curVal <= 0.15f),
-    // we must be cautious not to snap to a harmonic (octave-up error).
-    // Thus, if curVal <= 0.15f, we require the shorter period to have a highly confident
-    // local minimum (bestSubV < 0.35f). Otherwise, we allow a standard threshold (bestSubV < 0.50f).
-    float allowedSubThreshold = (curVal <= 0.15f) ? 0.35f : 0.50f;
+    // Snapping to a shorter period is only legitimate when the current tau was
+    // itself a SUBHARMONIC of the true fundamental — i.e. the difference
+    // function dips at least as deep at the shorter period as it does here.
+    // YIN's own minima are monotonically meaningful that way: a real
+    // fundamental's tau has the deepest (or near-deepest) dip, and integer
+    // multiples of it dip comparably. A mere HARMONIC of the true fundamental
+    // (the octave-up trap) produces a SHALLOWER dip at the shorter period, so
+    // we must refuse to snap there.
+    //
+    // Rule: the candidate shorter-period minimum must be no worse than the
+    // current one within a slack, AND clean in absolute terms. The slack is
+    // the crux:
+    //   * When curVal is POOR (current tau not a clean fundamental — typical at
+    //     a note onset), the true fundamental and its subharmonic dip about
+    //     equally; YIN says "prefer the shorter period", so we allow a generous
+    //     slack and snap up. This is the legitimate octave-DOWN correction.
+    //   * When curVal is CLEAN (current tau already a deep, confident
+    //     fundamental — a sustained vowel), a shallower dip at the shorter
+    //     period is just a HARMONIC. Snapping there is the octave-UP error that
+    //     pushed steady D3 (curVal≈0.14) up to its 2nd harmonic (bestSubV≈0.30).
+    //     So the slack collapses to ~0 and we refuse unless the shorter dip is
+    //     genuinely at least as deep.
+    // Interpolate the slack: full (0.10) at curVal≥0.35, none at curVal≤0.20.
+    float cleanFrac = juce::jlimit(0.0f, 1.0f, (curVal - 0.20f) / (0.35f - 0.20f));
+    const float kSubharmonicSlack = 0.10f * cleanFrac; // shorter dip may be this much worse
+    const float kSubharmonicAbsMax = 0.50f;  // ...but must still be reasonably deep
     for (int divisor = 4; divisor >= 2; --divisor) {
       int subTau = tauEstimate / divisor;
       if (subTau >= 10) { // Keep period reasonable (e.g. >10 samples)
@@ -355,7 +375,7 @@ float PitchDetector::getPitchYin() {
         int searchHi = juce::jmin(halfBufferSize - 2, (int)(subTau * 1.1));
         int bestSubT = subTau;
         float bestSubV = 1000.0f;
-        
+
         // Find the minimum in the search window around the sub-harmonic
         for (int t = searchLo; t <= searchHi; ++t) {
           if (yinBuffer[t] < bestSubV) {
@@ -363,15 +383,17 @@ float PitchDetector::getPitchYin() {
             bestSubT = t;
           }
         }
-        
+
         // Check if it's a local minimum in the YIN buffer
         bool isLocalMin = (bestSubT > 1 && bestSubT < halfBufferSize - 1 &&
                            yinBuffer[bestSubT] <= yinBuffer[bestSubT - 1] &&
                            yinBuffer[bestSubT] <= yinBuffer[bestSubT + 1]);
-                            
-        // If it is a clean local minimum with a decent depth,
-        // we assume the shorter period is the true fundamental.
-        if (isLocalMin && bestSubV < allowedSubThreshold) {
+
+        // Snap up only if the shorter period's dip is comparably deep (proving
+        // the current tau was a subharmonic, not the fundamental) and clean.
+        bool comparablyDeep = (bestSubV <= curVal + kSubharmonicSlack) &&
+                              (bestSubV < kSubharmonicAbsMax);
+        if (isLocalMin && comparablyDeep) {
           tauEstimate = bestSubT;
           break; // Snapped to the shortest valid divisor (highest pitch)
         }
