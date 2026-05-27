@@ -53,7 +53,7 @@ private:
   // 0.10 is the canonical YIN absolute threshold from the de Cheveigné &
   // Kawahara paper; 0.20 (the previous value here) is permissive and lets
   // weak harmonic minima win, which produces octave jumps.
-  float yinTolerance = 0.12f;
+  float yinTolerance = 0.15f;
   float getPitchYin();
 
   float lastValidPitch = 0.0f;

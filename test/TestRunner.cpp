@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
 
     // Run Classic Click Test (Test 5)
     std::cout << "\nTest 5: Verifying Classic Mode Attack 0 / Release 0 Click-Free Onset on dynamic_solo.wav" << std::endl;
-    runClassicClickTest("test/dynamic_solo.wav");
+    runClassicClickTest("test/samples/dynamic_solo.wav");
 
     std::cout << "\nAll tests PASSED successfully!" << std::endl;
     return 0;

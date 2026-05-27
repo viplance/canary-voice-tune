@@ -349,6 +349,44 @@ float PitchDetector::getPitchYin() {
     }
   }
 
+  // 4c. Octave-up sanity check (octave-down prevention): when YIN locked onto
+  // a subharmonic (e.g. 2×, 3x, or 4x the true period) because the true fundamental
+  // was noisy or had strong harmonics and missed the absolute threshold,
+  // we check if a shorter period (tauEstimate / divisor) has a
+  // reasonably deep local minimum. If so, we snap back to the higher octave.
+  if (tauEstimate > 0) {
+    for (int divisor = 4; divisor >= 2; --divisor) {
+      int subTau = tauEstimate / divisor;
+      if (subTau >= 10) { // Keep period reasonable (e.g. >10 samples)
+        int searchLo = juce::jmax(2, (int)(subTau * 0.9));
+        int searchHi = juce::jmin(halfBufferSize - 2, (int)(subTau * 1.1));
+        int bestSubT = subTau;
+        float bestSubV = 1000.0f;
+        
+        // Find the minimum in the search window around the sub-harmonic
+        for (int t = searchLo; t <= searchHi; ++t) {
+          if (yinBuffer[t] < bestSubV) {
+            bestSubV = yinBuffer[t];
+            bestSubT = t;
+          }
+        }
+        
+        // Check if it's a local minimum in the YIN buffer
+        bool isLocalMin = (bestSubT > 1 && bestSubT < halfBufferSize - 1 &&
+                           yinBuffer[bestSubT] <= yinBuffer[bestSubT - 1] &&
+                           yinBuffer[bestSubT] <= yinBuffer[bestSubT + 1]);
+                           
+        // If it is a clean local minimum with a decent depth (e.g. < 0.35),
+        // we assume the shorter period is the true fundamental.
+        if (isLocalMin && bestSubV < 0.35f) {
+          tauEstimate = bestSubT;
+          break; // Snapped to the shortest valid divisor (highest pitch)
+        }
+      }
+    }
+  }
+
+
   // Record the minimum's depth so callers can tell "I found a clear vowel"
   // (deep minimum, value near 0) from "I had to fall back to the best of a
   // bad lot" (shallow minimum, value near 0.5). Used by the consonant
