@@ -3,6 +3,7 @@
 #include "PitchShifterBase.h"
 #include "ModernPitchShifter.h"
 #include "ClassicPitchShifter.h"
+#include "VocalEffectsProcessor.h"
 #include <memory>
 
 class PitchShifter : public PitchShifterBase
@@ -34,6 +35,7 @@ public:
 private:
     std::unique_ptr<ModernPitchShifter> modernEngine;
     std::unique_ptr<ClassicPitchShifter> classicEngine;
+    VocalEffectsProcessor vocalEffects;
     
     int currentMode = 0; // 0 = Modern, 1 = Classic
     PitchShifterBase* activeEngine = nullptr;

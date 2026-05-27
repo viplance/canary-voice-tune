@@ -52,6 +52,8 @@ target_sources(CanaryVoiceTune PRIVATE
     Source/DSP/ClassicPitchShifter.h
     Source/DSP/PitchShifter.cpp
     Source/DSP/PitchShifter.h
+    Source/DSP/VocalEffectsProcessor.cpp
+    Source/DSP/VocalEffectsProcessor.h
     ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
 )
 
@@ -117,6 +119,8 @@ target_sources(CanaryVoiceTune_Tests PRIVATE
     Source/DSP/ClassicPitchShifter.h
     Source/DSP/PitchShifter.cpp
     Source/DSP/PitchShifter.h
+    Source/DSP/VocalEffectsProcessor.cpp
+    Source/DSP/VocalEffectsProcessor.h
     ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
 )
 

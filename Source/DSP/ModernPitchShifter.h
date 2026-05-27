@@ -29,8 +29,8 @@ public:
     void setBreathGate(float thresholdDb, bool isBreathDetected) override;
     void triggerOnsetFade(float fadeMs) override;
 
-    float getPopActivity() const override { return popActivity; }
-    float getBreathActivity() const override { return breathActivity.load(); }
+    float getPopActivity() const override { return 0.0f; }
+    float getBreathActivity() const override { return 0.0f; }
 
 private:
     static constexpr int kMaxChans = 2;
@@ -57,45 +57,6 @@ private:
     int dryDelayLength = 0;
     int dryDelayCapacity = 0;
     float crossoverHz = 5000.0f;
-
-    std::array<juce::dsp::IIR::Filter<float>, kMaxChans> sibilantsFilter;
-    juce::dsp::IIR::Coefficients<float>::Ptr sibilantsCoeffs;
-    float currentSibilantsDb = 0.0f;
-    static constexpr float kSibilantsHz = 7000.0f;
-
-    float breathThresholdDb = 0.0f;
-    bool isBreathActive = false;
-    float breathGain = 1.0f;
-    float breathAttackAlpha = 0.0f;
-    float breathReleaseAlpha = 0.0f;
-    std::atomic<float> breathActivity { 0.0f };
-    static constexpr float kBreathDuckDb = -6.0f;
-
-    std::vector<float> breathInputRms;
-    std::vector<bool> breathGateDelay;
-    int breathBlockIndex = 0;
-    int blockSize = 0;
-
-    float exciterDb = 0.0f;
-    bool isConsonantActive = false;
-    std::array<juce::dsp::IIR::Filter<float>, kMaxChans> exciterCrossover;
-    std::array<juce::dsp::IIR::Filter<float>, kMaxChans> exciterHarmonicFilter;
-
-    std::array<juce::dsp::LinkwitzRileyFilter<float>, kMaxChans> popLow;
-    std::array<juce::dsp::LinkwitzRileyFilter<float>, kMaxChans> popHigh;
-    float popThresholdDb = 0.0f;
-    float popFastEnv    = 0.0f;
-    float popSlowEnv    = 0.0f;
-    float popGain       = 1.0f;
-    float popFastAlpha  = 0.0f;
-    float popSlowAlpha  = 0.0f;
-    float popAttackAlpha  = 0.0f;
-    float popReleaseAlpha = 0.0f;
-    std::atomic<float> popActivity { 0.0f };
-    static constexpr float kPopCrossoverHz = 150.0f;
-    static constexpr float kPopDuckDb = -12.0f;
-    juce::AudioBuffer<float> popBassTemp;
-    juce::AudioBuffer<float> popHighTemp;
 
     int onsetFadeTotal     = 0;
     int onsetFadeRemaining = 0;

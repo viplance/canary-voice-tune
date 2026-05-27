@@ -16,12 +16,15 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
 
     modernEngine->prepare(sampleRate, samplesPerBlock);
     classicEngine->prepare(sampleRate, samplesPerBlock);
+    vocalEffects.prepare(sampleRate, samplesPerBlock);
 }
 
 void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 {
     if (activeEngine != nullptr) {
+        vocalEffects.processPrePitch(buffer, activeEngine->getLatencySamples());
         activeEngine->process(buffer);
+        vocalEffects.processPostPitch(buffer);
     }
 }
 
@@ -43,30 +46,22 @@ void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs,
 
 void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
 {
-    if (activeEngine != nullptr) {
-        activeEngine->setToneShaping(sibilantsDb, breathDb);
-    }
+    vocalEffects.setToneShaping(sibilantsDb, breathDb);
 }
 
 void PitchShifter::setExciter(float exciterDb, bool isConsonant)
 {
-    if (activeEngine != nullptr) {
-        activeEngine->setExciter(exciterDb, isConsonant);
-    }
+    vocalEffects.setExciter(exciterDb, isConsonant);
 }
 
 void PitchShifter::setPopFilter(float thresholdDb)
 {
-    if (activeEngine != nullptr) {
-        activeEngine->setPopFilter(thresholdDb);
-    }
+    vocalEffects.setPopFilter(thresholdDb);
 }
 
 void PitchShifter::setBreathGate(float thresholdDb, bool isBreathDetected)
 {
-    if (activeEngine != nullptr) {
-        activeEngine->setBreathGate(thresholdDb, isBreathDetected);
-    }
+    vocalEffects.setBreathGate(thresholdDb, isBreathDetected);
 }
 
 void PitchShifter::triggerOnsetFade(float fadeMs)
@@ -78,18 +73,12 @@ void PitchShifter::triggerOnsetFade(float fadeMs)
 
 float PitchShifter::getPopActivity() const
 {
-    if (activeEngine != nullptr) {
-        return activeEngine->getPopActivity();
-    }
-    return 0.0f;
+    return vocalEffects.getPopActivity();
 }
 
 float PitchShifter::getBreathActivity() const
 {
-    if (activeEngine != nullptr) {
-        return activeEngine->getBreathActivity();
-    }
-    return 0.0f;
+    return vocalEffects.getBreathActivity();
 }
 
 void PitchShifter::setTuningMode(int modeIndex)
