@@ -178,7 +178,7 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                     wasVoicedState[c] = true;
                     double targetVoicedAddr = (double)(absoluteWritePos - (int64_t)period - kGuardSamples);
                     
-                    crossFadeOutputAddr[c] = absoluteOutputAddr[c] + r;
+                    crossFadeOutputAddr[c] = absoluteOutputAddr[c] + 1.0;
                     crossFadeGain[c] = 1.0f;
                     absoluteOutputAddr[c] = targetVoicedAddr;
                     samplesSinceLastJump[c] = 0; // Reset jump counter on onset
@@ -201,6 +201,18 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                     }
                 }
             } else {
+                // Syllable Offset Transition Cross-fade (Voiced to Unvoiced):
+                // Smoothly cross-fade from the active voiced play pointer position
+                // to the clean unvoiced guard tracking position to prevent sudden pointer speed jumps!
+                if (wasVoicedState[c]) {
+                    wasVoicedState[c] = false;
+                    double targetUnvoicedAddr = (double)(absoluteWritePos - kGuardSamples);
+                    
+                    crossFadeOutputAddr[c] = absoluteOutputAddr[c] + r;
+                    crossFadeGain[c] = 1.0f;
+                    absoluteOutputAddr[c] = targetUnvoicedAddr;
+                }
+
                 wasVoicedState[c] = false;
 
                 // DLL-like tracking: smoothly slide pointer back to kGuardSamples distance to avoid transitions clicks

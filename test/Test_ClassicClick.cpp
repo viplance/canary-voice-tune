@@ -60,33 +60,59 @@ void runClassicClickTest(const juce::String& filename)
     TestHelpers::writeWavFile("test/result/classic_click_out.wav", outputBuffer, sampleRate);
 
     // Detect click transitions introduced by the pitch shifter.
+    // We use a robust amplitude-relative click detector to capture both large-amplitude clicks
+    // and lower-amplitude clicks (e.g. in quiet sections) that are disproportionately large
+    // compared to their local signal envelope.
     int clickCount = 0;
     float maxDelta = 0.0f;
-    for (int i = 1; i < numSamples; ++i) {
+    for (int i = 16; i < numSamples - 16; ++i) {
         float delta = std::abs(outputBuffer.getSample(0, i) - outputBuffer.getSample(0, i - 1));
         if (delta > maxDelta) {
             maxDelta = delta;
         }
-        if (delta > 0.28f) {
-            // Check if there is a corresponding steep delta in the input signal within +/- 64 samples
-            bool foundInInput = false;
-            int startWin = std::max(1, i - 64);
-            int endWin = std::min(numSamples - 1, i + 64);
-            for (int j = startWin; j <= endWin; ++j) {
-                float inDelta = std::abs(monoBuffer.getSample(0, j) - monoBuffer.getSample(0, j - 1));
-                if (inDelta > 0.22f) {
-                    foundInInput = true;
-                    break;
-                }
+
+        // Local output envelope around sample i (32 samples window)
+        float env = 0.0f;
+        for (int j = i - 16; j <= i + 16; ++j) {
+            float absVal = std::abs(outputBuffer.getSample(0, j));
+            if (absVal > env) {
+                env = absVal;
             }
-            
-            if (!foundInInput) {
-                clickCount++;
-                std::cout << "  INTRODUCED CLICK at sample " << i << ", delta: " << delta 
-                          << ", values: [" << outputBuffer.getSample(0, i - 2) << ", "
-                          << outputBuffer.getSample(0, i - 1) << ", "
-                          << outputBuffer.getSample(0, i) << ", "
-                          << outputBuffer.getSample(0, i + 1) << "]" << std::endl;
+        }
+
+        if (env > 0.08f) { // Only check active regions (above -22 dBFS noise floor)
+            if (delta > 0.40f * env) {
+                // Check if there is a corresponding steep delta in the input signal within +/- 32 samples
+                bool foundInInput = false;
+                int startWin = std::max(16, i - 32);
+                int endWin = std::min(numSamples - 17, i + 32);
+                for (int j = startWin; j <= endWin; ++j) {
+                    // Local input envelope around j
+                    float inEnv = 0.0f;
+                    for (int k = j - 16; k <= j + 16; ++k) {
+                        float absVal = std::abs(monoBuffer.getSample(0, k));
+                        if (absVal > inEnv) {
+                            inEnv = absVal;
+                        }
+                    }
+                    
+                    float inDelta = std::abs(monoBuffer.getSample(0, j) - monoBuffer.getSample(0, j - 1));
+                    if (inEnv > 0.02f && inDelta > 0.22f * inEnv) {
+                        foundInInput = true;
+                        break;
+                    }
+                }
+                
+                if (!foundInInput) {
+                    clickCount++;
+                    std::cout << "  INTRODUCED CLICK at sample " << i 
+                              << " (Time=" << (double)i / sampleRate << "s), delta: " << delta 
+                              << " (env: " << env << ", ratio: " << delta / env << "), values: ["
+                              << outputBuffer.getSample(0, i - 2) << ", "
+                              << outputBuffer.getSample(0, i - 1) << ", "
+                              << outputBuffer.getSample(0, i) << ", "
+                              << outputBuffer.getSample(0, i + 1) << "]" << std::endl;
+                }
             }
         }
     }
