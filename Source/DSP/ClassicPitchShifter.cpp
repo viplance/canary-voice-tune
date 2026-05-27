@@ -105,7 +105,7 @@ void ClassicPitchShifter::setTargetShift(float ratio, float attackMs, float rele
     isVoiced_ = isVoicedDebounced;
 
     float target = isVoiced_ ? currentRatio : 1.0f;
-    float timeMs = isVoiced_ ? attackMs : releaseMs;
+    float timeMs = isVoiced_ ? attackMs : 5.0f; // Fixed extremely fast 5ms release to prevent "quacking"
     float fastMs = 12.0f;
     float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
     if (trackingMs < 1.0f) trackingMs = 1.0f;

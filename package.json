@@ -1,6 +1,6 @@
 {
   "name": "canary-voice-tune",
-  "version": "0.9.9996",
+  "version": "0.9.9997",
   "description": "A high-performance VST3 audio plugin for MacOS M-Series to perform transparent voice pitch correction.",
   "scripts": {
     "fetch-juce": "mkdir -p vendor && if [ ! -d vendor/JUCE ]; then echo '>>> Downloading JUCE (develop)...' && curl -L https://github.com/juce-framework/JUCE/archive/refs/heads/develop.zip -o vendor/juce.zip && unzip -q vendor/juce.zip -d vendor && mv vendor/JUCE-develop vendor/JUCE && rm vendor/juce.zip && echo '>>> JUCE downloaded.'; else echo '>>> JUCE already present, skipping download.'; fi",

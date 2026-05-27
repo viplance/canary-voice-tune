@@ -122,11 +122,11 @@ void ModernPitchShifter::setTargetShift(float ratio, float attackMs, float relea
                                         bool isVoiced, float detectedHz,
                                         float vibratoAmount)
 {
-    juce::ignoreUnused(detectedHz);
+    juce::ignoreUnused(detectedHz, releaseMs);
     currentRatio = ratio;
 
     float target = isVoiced ? currentRatio : 1.0f;
-    float timeMs = isVoiced ? attackMs : releaseMs;
+    float timeMs = isVoiced ? attackMs : 5.0f; // Fixed extremely fast 5ms release to prevent "quacking"
     float fastMs = 12.0f;
     float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
     if (trackingMs < 1.0f) trackingMs = 1.0f;
