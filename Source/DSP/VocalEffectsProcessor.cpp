@@ -109,7 +109,7 @@ void VocalEffectsProcessor::setToneShaping(float sibilantsDb, float breathDb)
 
 void VocalEffectsProcessor::setExciter(float exciterDb, bool isConsonant)
 {
-    if (exciterDb > 6.0f) exciterDb = 6.0f;
+    if (exciterDb > 12.0f) exciterDb = 12.0f;
     if (exciterDb < 0.0f) exciterDb = 0.0f;
     this->exciterDb = exciterDb;
     this->isConsonantActive = isConsonant;

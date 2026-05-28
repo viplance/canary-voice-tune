@@ -134,9 +134,9 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   // Sibilants: high-shelf gain around 7 kHz for "s/sh/t" presence.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
-  // Exciter: harmonic enhancer level (0.0 dB to 6.0 dB)
+  // Exciter: harmonic enhancer level (0.0 dB to 12.0 dB)
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"EXCITER", 1}, "Exciter", 0.0f, 6.0f, 0.0f));
+      juce::ParameterID{"EXCITER", 1}, "Exciter", 0.0f, 12.0f, 0.0f));
   // Breath Gate: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"BREATH", 1}, "Breath", -48.0f, 0.0f, 0.0f));
