@@ -66,7 +66,6 @@ private:
                                float blockSize,
                                float sr,
                                float attackMs,
-                               float correctionStrength,
                                float vibratoAmount,
                                float& outRatio);
   // `extraDelaySamples` is added on top of the shifter latency when the
@@ -81,7 +80,6 @@ private:
 
   std::atomic<float> *attackParam = nullptr;
   std::atomic<float> *releaseParam = nullptr;
-  std::atomic<float> *rangeParam = nullptr;
   std::atomic<float> *vibratoParam = nullptr;
   std::atomic<float> *exciterParam = nullptr;
   std::atomic<float> *sibilantsParam = nullptr;

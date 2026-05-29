@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "Bash(sed -i '' '/rangeParam     = apvts.getRawParameterValue\\(\"RANGE\"\\);/d' Source/PluginProcessor.cpp)",
+      "Bash(sed -i '' '/setParam\\(\"RANGE\"/d' Source/PluginProcessor.cpp)",
+      "Bash(sed -i '' '/juce::ParameterID{\"RANGE\", 1}, \"Range\", 0.0f, 100.0f, 0.0f\\)\\);/d' Source/PluginProcessor.cpp)",
+      "Bash(sed -i '' '/float correctionStrength = \\(rangeParam   ? rangeParam->load\\(\\)    : 0.0f\\) \\\\/ 100.0f;/d' Source/PluginProcessor.cpp)",
+      "Bash(sed -n '542,545p' Source/PluginProcessor.cpp)"
+    ]
+  }
+}

@@ -18,7 +18,6 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
 {
   attackParam    = apvts.getRawParameterValue("ATTACK");
   releaseParam   = apvts.getRawParameterValue("RELEASE");
-  rangeParam     = apvts.getRawParameterValue("RANGE");
   vibratoParam   = apvts.getRawParameterValue("VIBRATO");
   exciterParam   = apvts.getRawParameterValue("EXCITER");
   sibilantsParam = apvts.getRawParameterValue("SIBILANTS");
@@ -88,7 +87,6 @@ void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
       // Default (Chromatic)
       setParam("ATTACK", 100.0f);
       setParam("RELEASE", 250.0f);
-      setParam("RANGE", 0.0f);
       setParam("VIBRATO", 1.0f);
       setParam("EXCITER", 0.0f);
       setParam("SIBILANTS", 0.0f);
@@ -102,7 +100,6 @@ void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
       // Harmonic Presets (C Major, C Minor, etc.)
       setParam("ATTACK", 20.0f);
       setParam("RELEASE", 150.0f);
-      setParam("RANGE", 90.0f);
       setParam("VIBRATO", 0.8f);
       setParam("EXCITER", 1.5f);
       setParam("SIBILANTS", 0.0f);
@@ -124,9 +121,7 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
       juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 150.0f, 100.0f));
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 500.0f, 250.0f));
-  // Range: 0% = no correction (bypass), 100% = full snap to nearest note
-  params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"RANGE", 1}, "Range", 0.0f, 100.0f, 0.0f));
+  // (Range control removed — note matching is always maximal.)
   // Vibrato: maximum pitch deviation (in semitones) allowed around the
   // smoothed centre. 0 = perfectly flat, 1 = up to ±1 semitone of wobble.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -227,7 +222,7 @@ void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
 
 int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
     float detectedHz, const bool* activeKeys, float blockSize, float sr,
-    float attackMs, float correctionStrength, float vibratoAmount,
+    float attackMs, float vibratoAmount,
     float& outRatio) {
   voicedSampleCount += (int)blockSize;
 
@@ -351,9 +346,9 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // Target is always an active key (with `correctionStrength` controlling how
   // far we pull the raw pitch toward it). `lockBypass` only fades in the dry
   // signal during the lock-engage window.
-  float diff           = smoothedMidi - bestMidi;
-  float remainingDiff  = diff * (1.0f - correctionStrength);
-  float rawTargetMidi  = bestMidi + remainingDiff + clampedDev;
+  // Note matching is always maximal (no Range control): the target is the
+  // chosen key exactly, plus the retained vibrato deviation.
+  float rawTargetMidi  = bestMidi + clampedDev;
   rawTargetMidi        = rawTargetMidi * (1.0f - lockBypass)
                        + effectiveMidi * lockBypass;
 
@@ -463,7 +458,6 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   // ---- Snapshot user controls --------------------------------------------
   float attackMs           = attackParam   ? attackParam->load()   : 10.0f;
   float releaseMs          = releaseParam  ? releaseParam->load()  : 100.0f;
-  float correctionStrength = (rangeParam   ? rangeParam->load()    : 0.0f) / 100.0f;
   float vibratoAmount      = vibratoParam ? vibratoParam->load() : 1.0f;
   float exciterDb          = exciterParam  ? exciterParam->load()  : 0.0f;
   float sibilantsDb        = sibilantsParam? sibilantsParam->load(): 0.0f;
@@ -546,7 +540,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     displayedMidi = chooseTargetNoteAndRatio(
         detectedHz, activeKeys,
         (float)buffer.getNumSamples(), (float)getSampleRate(),
-        attackMs, correctionStrength, vibratoAmount, targetRatio);
+        attackMs, vibratoAmount, targetRatio);
   }
 
   // ---- Notify UI of any note-change event --------------------------------

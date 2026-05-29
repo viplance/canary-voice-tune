@@ -10,9 +10,6 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   releaseAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
           audioProcessor.apvts, "RELEASE", releaseKnob);
-  rangeAttachment =
-      std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-          audioProcessor.apvts, "RANGE", rangeKnob);
   vibratoAttachment =
       std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
           audioProcessor.apvts, "VIBRATO", vibratoKnob);
@@ -34,7 +31,6 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
 
   attackKnob.setTextValueSuffix(" ms");
   releaseKnob.setTextValueSuffix(" ms");
-  rangeKnob.setTextValueSuffix(" %");
   vibratoKnob.setTextValueSuffix(" st");
   exciterKnob.setTextValueSuffix(" dB");
   sibilantsKnob.setTextValueSuffix(" dB");
@@ -50,7 +46,6 @@ CanaryVoiceTuneAudioProcessorEditor::CanaryVoiceTuneAudioProcessorEditor(
   addAndMakeVisible(tuningModeSelector);
   addAndMakeVisible(attackKnob);
   addAndMakeVisible(releaseKnob);
-  addAndMakeVisible(rangeKnob);
   addAndMakeVisible(vibratoKnob);
   addAndMakeVisible(exciterKnob);
   addAndMakeVisible(sibilantsKnob);
@@ -236,8 +231,6 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
              juce::Justification::centredBottom, false);
   g.drawText("Release", getLabelBounds(releaseKnob),
              juce::Justification::centredBottom, false);
-  g.drawText("Range", getLabelBounds(rangeKnob),
-             juce::Justification::centredBottom, false);
   g.drawText("Vibrato", getLabelBounds(vibratoKnob),
              juce::Justification::centredBottom, false);
   g.drawText("Exciter", getLabelBounds(exciterKnob),
@@ -264,15 +257,13 @@ void CanaryVoiceTuneAudioProcessorEditor::resized() {
   // Labels are drawn in paint() at knob.getBounds().translated(0, -22)
   auto labelRow = knobStrip.removeFromTop(22); // reserved for painted labels
   (void)labelRow;
-  int controlWidth = knobStrip.getWidth() / 9;
+  int controlWidth = knobStrip.getWidth() / 8;
 
   tuningModeSelector.setBounds(
       knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   attackKnob.setBounds(
       knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   releaseKnob.setBounds(
-      knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
-  rangeKnob.setBounds(
       knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
   vibratoKnob.setBounds(
       knobStrip.removeFromLeft(controlWidth).withSizeKeepingCentre(80, 80));
