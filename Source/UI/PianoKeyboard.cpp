@@ -50,26 +50,43 @@ juce::Rectangle<int> PianoKeyboard::getKeyBounds(int note)
 {
     int numWhiteKeys = 52;
     float whiteKeyWidth = getWidth() / (float)numWhiteKeys;
-    
+
+    // Reserve a strip at the top for octave-number labels; keys start below it.
+    int top = kLabelStripH;
+    int keysHeight = getHeight() - top;
+
     if (!isBlackKey(note))
     {
         int whiteIdx = getWhiteKeyIndex(note);
-        return juce::Rectangle<int>(std::round(whiteIdx * whiteKeyWidth), 0, std::round(whiteKeyWidth), getHeight());
+        return juce::Rectangle<int>(std::round(whiteIdx * whiteKeyWidth), top, std::round(whiteKeyWidth), keysHeight);
     }
     else
     {
         int whiteIdxBefore = getWhiteKeyIndex(note);
         float blackKeyWidth = whiteKeyWidth * 0.6f;
-        float blackKeyHeight = getHeight() * 0.6f;
+        float blackKeyHeight = keysHeight * 0.6f;
         float xPos = whiteIdxBefore * whiteKeyWidth - (blackKeyWidth * 0.5f);
-        return juce::Rectangle<int>(std::round(xPos), 0, std::round(blackKeyWidth), std::round(blackKeyHeight));
+        return juce::Rectangle<int>(std::round(xPos), top, std::round(blackKeyWidth), std::round(blackKeyHeight));
     }
+}
+
+juce::String PianoKeyboard::getNoteName(int note)
+{
+    // Letter only (no octave number); the octave number lives in the top strip.
+    // note 0 = A0 (MIDI 21).
+    static const char* names[12] = { "C", "C#", "D", "D#", "E", "F", "F#",
+                                     "G", "G#", "A", "A#", "B" };
+    int midi = note + 21;
+    return juce::String(names[midi % 12]);
 }
 
 void PianoKeyboard::paint (juce::Graphics& g)
 {
     // Draw the keyboard background as transparent/soft beige
     g.fillAll(juce::Colours::transparentBlack);
+
+    // Octave-number strip across the top of the keyboard.
+    drawOctaveStrip(g);
 
     // Draw white keys first
     for (int i = 0; i < 88; ++i)
@@ -85,8 +102,8 @@ void PianoKeyboard::paint (juce::Graphics& g)
             juce::Colour::fromRGB(246, 240, 226), 0.0f, (float)bounds.getBottom(),
             false);
 
-        juce::Colour keyColor = enabled ? juce::Colour::fromRGB(250, 246, 234) : juce::Colour::fromRGB(215, 208, 194);
-        
+        juce::Colour keyColor = enabled ? juce::Colour::fromRGB(250, 246, 234) : juce::Colour::fromRGB(189, 182, 168);
+
         g.setColour(keyColor);
         if (enabled) {
             g.setGradientFill(keyGrad);
@@ -103,9 +120,23 @@ void PianoKeyboard::paint (juce::Graphics& g)
             g.fillRect(bounds);
         }
 
+        // Clearly mark a DISABLED (out-of-scale) white key: dim it further and
+        // draw a small muted dot near the top so it reads as "off" even when
+        // the tint difference is subtle on bright displays.
+        if (!enabled) {
+            g.setColour(juce::Colours::black.withAlpha(0.10f));
+            g.fillRect(bounds);
+            float d = juce::jmin(6.0f, bounds.getWidth() * 0.28f);
+            g.setColour(juce::Colour::fromRGB(150, 142, 128));
+            g.fillEllipse(bounds.getCentreX() - d * 0.5f, bounds.getY() + 6.0f, d, d);
+        }
+
         // Draw soft, premium warm-grey white-key border
         g.setColour(juce::Colour::fromRGB(205, 195, 178));
         g.drawRect(bounds, 1);
+
+        // Note name near the bottom of each white key.
+        drawKeyLabel(g, bounds, getNoteName(i), enabled, false);
     }
 
     // Draw black keys
@@ -117,8 +148,8 @@ void PianoKeyboard::paint (juce::Graphics& g)
         auto param = apvts.getParameter("KEY_" + juce::String(i));
         bool enabled = param ? param->getValue() > 0.5f : true;
 
-        juce::Colour keyColor = enabled ? juce::Colour::fromRGB(45, 41, 37) : juce::Colour::fromRGB(95, 88, 80);
-        
+        juce::Colour keyColor = enabled ? juce::Colour::fromRGB(45, 41, 37) : juce::Colour::fromRGB(120, 112, 103);
+
         g.setColour(keyColor);
         g.fillRect(bounds);
 
@@ -138,9 +169,89 @@ void PianoKeyboard::paint (juce::Graphics& g)
             g.drawRect(bounds.withHeight(2), 1);
         }
 
+        // Clearly mark a DISABLED (out-of-scale) black key: hatch overlay + dot.
+        if (!enabled) {
+            float d = juce::jmin(5.0f, bounds.getWidth() * 0.45f);
+            g.setColour(juce::Colour::fromRGB(60, 55, 50));
+            g.fillEllipse(bounds.getCentreX() - d * 0.5f, bounds.getY() + 4.0f, d, d);
+        }
+
         g.setColour(juce::Colour::fromRGB(25, 22, 20));
         g.drawRect(bounds, 1);
+
+        // Black keys are intentionally left unlabelled.
     }
+}
+
+void PianoKeyboard::drawOctaveStrip(juce::Graphics& g)
+{
+    auto strip = juce::Rectangle<int>(0, 0, getWidth(), kLabelStripH);
+
+    // Soft strip background matching the warm-beige theme.
+    g.setColour(juce::Colour::fromRGB(238, 231, 216));
+    g.fillRect(strip);
+    g.setColour(juce::Colour::fromRGB(205, 195, 178));
+    g.drawLine(0.0f, (float)kLabelStripH, (float)getWidth(), (float)kLabelStripH, 1.0f);
+
+    g.setFont(juce::Font(juce::jlimit(11.0f, 15.0f, kLabelStripH * 0.78f), juce::Font::bold));
+
+    g.setColour(juce::Colour::fromRGB(120, 112, 98));
+
+    // The keyboard starts at A0, so the first span (A0..B0, before the first C)
+    // is the partial octave 0. Label it explicitly since the loop below only
+    // starts a span at each C.
+    {
+        int firstC = getWidth();
+        for (int j = 0; j < 88; ++j)
+            if ((j + 21) % 12 == 0) { firstC = getKeyBounds(j).getX(); break; }
+        // Align "0" to the very start, over the A0 key.
+        auto a0 = getKeyBounds(0); // A0
+        juce::Rectangle<int> labelArea(a0.getX() + 3, 0,
+                                       juce::jmax(a0.getWidth(), firstC), kLabelStripH);
+        g.drawText("0", labelArea, juce::Justification::centredLeft, false);
+    }
+
+    // For each octave, find its left edge (this C key) and right edge (the next
+    // C key, or the keyboard end). Draw a divider at the left boundary and the
+    // octave number centred in the middle of the span.
+    for (int i = 0; i < 88; ++i)
+    {
+        if ((i + 21) % 12 != 0) continue; // start of an octave = C
+
+        int left = getKeyBounds(i).getX();
+
+        // Right edge = x of the next C, else the right end of the keyboard.
+        int right = getWidth();
+        for (int j = i + 1; j < 88; ++j)
+            if ((j + 21) % 12 == 0) { right = getKeyBounds(j).getX(); break; }
+
+        // Octave boundary divider.
+        g.setColour(juce::Colour::fromRGB(205, 195, 178));
+        g.drawLine((float)left, 0.0f, (float)left, (float)kLabelStripH, 1.0f);
+
+        int octave = (i + 21) / 12 - 1;
+        juce::Rectangle<int> labelArea(left, 0, right - left, kLabelStripH);
+        g.setColour(juce::Colour::fromRGB(120, 112, 98));
+        g.drawText(juce::String(octave), labelArea, juce::Justification::centred, false);
+    }
+}
+
+void PianoKeyboard::drawKeyLabel(juce::Graphics& g, juce::Rectangle<int> bounds,
+                                 const juce::String& name, bool enabled, bool blackKey)
+{
+    // Only label if the key is wide enough to read; otherwise it's just clutter.
+    if (bounds.getWidth() < 11) return;
+
+    float fontH = juce::jlimit(9.0f, 14.0f, bounds.getWidth() * 0.85f);
+    g.setFont(juce::Font(fontH, juce::Font::bold));
+
+    juce::Colour textColor = blackKey
+        ? (enabled ? juce::Colours::white.withAlpha(0.78f) : juce::Colours::white.withAlpha(0.40f))
+        : (enabled ? juce::Colour::fromRGB(120, 112, 98)   : juce::Colour::fromRGB(150, 143, 130));
+
+    g.setColour(textColor);
+    auto labelArea = bounds.withTrimmedBottom(3).removeFromBottom((int)fontH + 4);
+    g.drawText(name, labelArea, juce::Justification::centredBottom, false);
 }
 
 void PianoKeyboard::resized()

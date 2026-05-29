@@ -24,6 +24,13 @@ private:
     bool isBlackKey(int note);
     int getWhiteKeyIndex(int note);
     juce::Rectangle<int> getKeyBounds(int note);
+    juce::String getNoteName(int note);
+    void drawKeyLabel(juce::Graphics& g, juce::Rectangle<int> bounds,
+                      const juce::String& name, bool enabled, bool blackKey);
+    void drawOctaveStrip(juce::Graphics& g);
+
+    // Height (px) of the octave-number strip above the keys.
+    static constexpr int kLabelStripH = 18;
 
     int currentlyDetectedNote = -1; // 0 to 87
 
