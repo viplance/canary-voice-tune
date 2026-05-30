@@ -86,6 +86,13 @@ private:
   // pitches from a previous phrase separated by silence.
   int   silentBlockCount = 0;
   static const int kMedianFlushBlocks = 2; // flush after this many silent blocks
+
+  // Slow-moving pitch anchor: EMA that only updates when the current estimate
+  // is within ±6 semitones of itself.  Used by the octave-continuity guard to
+  // reject transient high-pitch phonemes (voice break, consonant onset) that
+  // make the regular lastValidPitch race upward before the guard can act.
+  float slowAnchor = 0.0f;
+
   float medianOf(float a, float b, float c, float d, float e) const;
 
   bool  breathFlag = false;

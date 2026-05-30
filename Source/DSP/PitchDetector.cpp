@@ -21,6 +21,7 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   medianIndex = 0;
   medianFilled = 0;
   silentBlockCount = 0;
+  slowAnchor = 0.0f;
   consonantFlag = false;
   breathFlag = false;
   breathBlockCounter = 0;
@@ -216,22 +217,33 @@ float PitchDetector::process(const float *audioData, int numSamples) {
                           medianHistory[4]);
     }
 
-    // Octave-continuity guard: when the median estimate lands ~2× above the
-    // last confirmed pitch, the circular buffer almost certainly still holds
-    // mixed old/new audio (note onset or short silence), so the higher tau
-    // didn't converge cleanly and YIN grabbed the 2nd harmonic instead of
-    // the fundamental.  We fall back to lastValidPitch in that case — the
-    // smoother will blend toward the true pitch as the buffer fills.
-    // This is only applied when lastValidPitch is already established (> 0)
-    // and the jump is clearly an octave (ratio 1.7–2.4×), not a large
-    // intentional interval (which passes through the normal smoothing path).
-    if (lastValidPitch > 0.0f) {
-      float octaveRatio = pitchEst / lastValidPitch;
-      if (octaveRatio > 1.7f && octaveRatio < 2.4f) {
-        // Treat this block as if it returned lastValidPitch — the blending
-        // below will let the true new pitch emerge gradually once the buffer
-        // has enough fresh samples.
-        pitchEst = lastValidPitch;
+    // Octave-continuity guard using a slow anchor.
+    //
+    // `slowAnchor` is a slow EMA of pitchEst that only updates when the
+    // current estimate is within ±6 semitones of itself.  Because it ignores
+    // transient high-pitch phonemes (voice breaks, consonant onsets, 2nd-
+    // harmonic blips), it stays near the true note pitch even when the normal
+    // lastValidPitch has already been contaminated.
+    //
+    // When pitchEst is ~2× slowAnchor (ratio 1.6–2.5), we hold slowAnchor
+    // instead.  This catches both the "mixed-buffer onset" case and the
+    // "transitional phoneme between notes" case seen at ~6.9 s in long_melody.
+    if (slowAnchor > 0.0f && pitchEst > 0.0f) {
+      float octaveRatio = pitchEst / slowAnchor;
+      if (octaveRatio > 1.6f && octaveRatio < 2.5f) {
+        pitchEst = slowAnchor;
+      }
+    }
+    // Update slowAnchor only when pitchEst is within ±6 semitones of it.
+    if (pitchEst > 0.0f) {
+      if (slowAnchor <= 0.0f) {
+        slowAnchor = pitchEst;
+      } else {
+        float r = pitchEst / slowAnchor;
+        if (r > 0.75f && r < 1.335f) { // ±6 semitones
+          slowAnchor = slowAnchor * 0.85f + pitchEst * 0.15f;
+        }
+        // Outside ±6 st: anchor stays frozen until pitch returns to its range.
       }
     }
 
@@ -261,6 +273,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
       for (auto& v : medianHistory) v = 0.0f;
       medianIndex = 0;
       medianFilled = 0;
+      slowAnchor = 0.0f;
     }
 
     if (holdCounter < holdFrames && lastValidPitch > 0.0f) {
