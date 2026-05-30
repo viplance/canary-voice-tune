@@ -20,6 +20,7 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   for (auto& v : medianHistory) v = 0.0f;
   medianIndex = 0;
   medianFilled = 0;
+  silentBlockCount = 0;
   consonantFlag = false;
   breathFlag = false;
   breathBlockCounter = 0;
@@ -74,9 +75,14 @@ float PitchDetector::process(const float *audioData, int numSamples) {
     writeIndex = (writeIndex + 1) % yinBufferSize;
   }
 
+  // RMS of the current block only — used as a voiced/unvoiced gate for YIN.
+  // Previously computed over the whole 2048-sample circular buffer, which
+  // kept RMS above the threshold long after the signal faded (old samples
+  // still in the buffer) and caused YIN to run on stale data → spurious
+  // low-pitch detections on the note tail. Block-level RMS reacts instantly.
   float rms = 0.0f;
-  for (float sample : circularBuffer) rms += sample * sample;
-  rms = std::sqrt(rms / yinBufferSize);
+  for (int i = 0; i < numSamples; ++i) rms += audioData[i] * audioData[i];
+  rms = (numSamples > 0) ? std::sqrt(rms / numSamples) : 0.0f;
 
   // ---- Consonant detection on the JUST-arrived block ---------------------
   // Three cheap features, computed only on the new samples (not the whole
@@ -196,9 +202,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
 
 
   if (rawPitch > 0.0f) {
-    // Octave correction against history is deprecated and disabled to prevent feedback lock-ins.
-    // The robust YIN divisor-snapping (Steps 4b and 4c) and the 5-frame median filter
-    // are sufficient to prevent octave drops and smooth out single-frame tracking errors.
+    silentBlockCount = 0;
 
     // Push the (possibly corrected) raw pitch through a 5-frame median
     // filter to reject single-frame outliers.
@@ -212,21 +216,35 @@ float PitchDetector::process(const float *audioData, int numSamples) {
                           medianHistory[4]);
     }
 
+    // Octave-continuity guard: when the median estimate lands ~2× above the
+    // last confirmed pitch, the circular buffer almost certainly still holds
+    // mixed old/new audio (note onset or short silence), so the higher tau
+    // didn't converge cleanly and YIN grabbed the 2nd harmonic instead of
+    // the fundamental.  We fall back to lastValidPitch in that case — the
+    // smoother will blend toward the true pitch as the buffer fills.
+    // This is only applied when lastValidPitch is already established (> 0)
+    // and the jump is clearly an octave (ratio 1.7–2.4×), not a large
+    // intentional interval (which passes through the normal smoothing path).
+    if (lastValidPitch > 0.0f) {
+      float octaveRatio = pitchEst / lastValidPitch;
+      if (octaveRatio > 1.7f && octaveRatio < 2.4f) {
+        // Treat this block as if it returned lastValidPitch — the blending
+        // below will let the true new pitch emerge gradually once the buffer
+        // has enough fresh samples.
+        pitchEst = lastValidPitch;
+      }
+    }
+
     // Stash the per-block estimate before exponential smoothing so callers
     // that need the live wobble (e.g. vibrato cancellation in the shifter)
     // can read it without the multi-block lag of `lastValidPitch`.
     instantPitch = pitchEst;
 
-    // Smooth into lastValidPitch. Big jumps now (after octave correction +
-    // median) are most likely real — accept with light smoothing rather
-    // than the previous "raw assignment" that caused single-block flips.
     if (lastValidPitch > 0.0f) {
       float ratio = pitchEst / lastValidPitch;
       if (ratio > 0.85f && ratio < 1.18f) {
         lastValidPitch = lastValidPitch * 0.7f + pitchEst * 0.3f;
       } else {
-        // Larger but still plausible step (≤ ~3 semitones) — accept with
-        // a bit of smoothing to absorb residual noise.
         lastValidPitch = lastValidPitch * 0.4f + pitchEst * 0.6f;
       }
     } else {
@@ -235,6 +253,16 @@ float PitchDetector::process(const float *audioData, int numSamples) {
     confidence = 1.0f;
     holdCounter = 0;
   } else {
+    ++silentBlockCount;
+    // Flush the median ring after a short run of silent blocks so that the
+    // first voiced block of the next note is not dragged toward the previous
+    // note's pitch by stale median values.
+    if (silentBlockCount >= kMedianFlushBlocks) {
+      for (auto& v : medianHistory) v = 0.0f;
+      medianIndex = 0;
+      medianFilled = 0;
+    }
+
     if (holdCounter < holdFrames && lastValidPitch > 0.0f) {
       holdCounter++;
       confidence = 1.0f - ((float)holdCounter / (float)holdFrames);
@@ -242,11 +270,6 @@ float PitchDetector::process(const float *audioData, int numSamples) {
       lastValidPitch = 0.0f;
       instantPitch = 0.0f;
       confidence = 0.0f;
-      // Clear the median ring so the next voiced phrase doesn't get
-      // contaminated by the previous one's pitches.
-      for (auto& v : medianHistory) v = 0.0f;
-      medianIndex = 0;
-      medianFilled = 0;
     }
   }
 

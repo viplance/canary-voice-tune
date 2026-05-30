@@ -81,6 +81,11 @@ private:
   float medianHistory[kMedianHistory] = {0,0,0,0,0};
   int   medianIndex = 0;
   int   medianFilled = 0;
+  // Number of consecutive silent (rawPitch==0) blocks since last voiced block.
+  // Used to flush the median ring early so a new-note onset doesn't inherit
+  // pitches from a previous phrase separated by silence.
+  int   silentBlockCount = 0;
+  static const int kMedianFlushBlocks = 2; // flush after this many silent blocks
   float medianOf(float a, float b, float c, float d, float e) const;
 
   bool  breathFlag = false;
