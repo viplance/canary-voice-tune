@@ -21,7 +21,7 @@ void runExciterTest(const juce::String& filename)
     shifterOn.prepare(sampleRate, block_size);
     
     shifterOff.setExciter(0.0f, false);
-    shifterOn.setExciter(6.0f, false);
+    shifterOn.setExciter(12.0f, false);
     shifterOff.setBreathGate(0.0f, false); // disabled
     shifterOn.setBreathGate(0.0f, false);  // disabled
     

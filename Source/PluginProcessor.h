@@ -66,6 +66,7 @@ private:
                                float blockSize,
                                float sr,
                                float attackMs,
+                               float releaseMs,
                                float vibratoAmount,
                                float& outRatio);
   // `extraDelaySamples` is added on top of the shifter latency when the
@@ -91,28 +92,35 @@ private:
   std::vector<float> monoMix; // scratch buffer for pitch detector input
 
   // Per-voiced-segment tracking (audio thread only)
-  int lockedMidi = -1;        // captured note for the current voiced segment
-  int lockEngageSamples = 0;  // samples since lockedMidi was set (fade-in)
-  int lockReleaseSamples = 0; // consecutive samples far from lockedMidi
+  //
+  // Naming convention:
+  //   releaseMidi       — the note currently being held / tuned to.
+  //   attackSamples     — samples elapsed since releaseMidi was set;
+  //                       used for the Attack fade-in.
+  //   noteHeldSamples   — total voiced samples on releaseMidi so far;
+  //                       Release prevents switching before this reaches
+  //                       releaseMs (gives inertia to the current note).
+  //   candidateMidi /
+  //   candidateStableSamples — next proposed note + how long it has been
+  //                       stable; Attack controls how long it must stay
+  //                       stable before we actually switch.
+  //   releaseTailMidi /
+  //   releaseTailSamplesRemaining — post-silence hold so the keyboard
+  //                       highlight and shifter target stay coherent for
+  //                       the full Release tail.
+  int releaseMidi = -1;
+  int attackSamples = 0;
+  int noteHeldSamples = 0;
   bool wasVoiced = false;
   float smoothedMidi = -1.0f;
   float smoothedTargetMidi = -1.0f;
   int voicedSampleCount = 0;
 
-  // Re-lock stability tracking. `candidateMidi` is the note that has been
-  // proposed by the closest-active-key search across recent blocks; we only
-  // switch `lockedMidi` to it after it has stayed unchanged for at least
-  // `attackMs` worth of samples. This kills the per-block jitter that
-  // happens when `smoothedMidi` lands on the boundary between two adjacent
-  // active keys.
   int candidateMidi = -1;
   int candidateStableSamples = 0;
 
-  // Hold the previous `lockedMidi` (and its remaining hold-time) so the
-  // keyboard highlight and pitch-shift target stay coherent for the whole
-  // release fade, instead of vanishing the instant the singer stops.
-  int releaseHoldMidi = -1;
-  int releaseHoldSamplesRemaining = 0;
+  int releaseTailMidi = -1;
+  int releaseTailSamplesRemaining = 0;
 
   // Lock-free SPSC ring of (visibleAtClock, note-index) events. The audio
   // thread pushes one entry whenever the displayed note index changes,

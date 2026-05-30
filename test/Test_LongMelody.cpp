@@ -17,21 +17,23 @@
 
 namespace {
 
-// Per-voiced-segment tuning state (mirrors the processor members).
+// Per-voiced-segment tuning state (mirrors PluginProcessor members).
 struct TuneState {
     float smoothedMidi = -1.0f;
     float smoothedTargetMidi = -1.0f;
-    int   lockedMidi = -1;
-    int   lockEngageSamples = 0;
+    int   releaseMidi = -1;
+    int   attackSamples = 0;
+    int   noteHeldSamples = 0;
     int   candidateMidi = -1;
     int   candidateStableSamples = 0;
     long  voicedSampleCount = 0;
     void reset() { *this = TuneState{}; }
 };
 
-// Mirror of chooseTargetNoteAndRatio (hard tune, no Range): returns ratio.
+// Mirror of chooseTargetNoteAndRatio: returns ratio.
 float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
-                   float blockSize, float sr, float attackMs, float vibratoAmount)
+                   float blockSize, float sr, float attackMs, float releaseMs,
+                   float vibratoAmount)
 {
     s.voicedSampleCount += (long)blockSize;
     float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
@@ -56,29 +58,34 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
 
     const float hysteresisSt = 0.1f;
     float lockPitch = (s.smoothedMidi > 0.0f) ? s.smoothedMidi : effectiveMidi;
-    int bestMidi = NoteSelector::chooseActiveNote(activeKeys, lockPitch, s.lockedMidi, hysteresisSt);
+    int bestMidi = NoteSelector::chooseActiveNote(activeKeys, lockPitch, s.releaseMidi, hysteresisSt);
     if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
 
-    const int lockGraceSamples    = (int)(sr * 0.050f);
-    const int reLockStableSamples = (int)(sr * std::max(attackMs, 1.0f) / 1000.0f);
-    if (s.voicedSampleCount >= lockGraceSamples && s.lockedMidi < 0) {
-        s.lockedMidi = bestMidi; s.lockEngageSamples = 0;
+    const int graceSamples        = (int)(sr * 0.050f);
+    const int attackStableSamples = (int)(sr * std::max(attackMs, 1.0f) / 1000.0f);
+    const int releaseHoldSamples  = (int)(sr * std::max(releaseMs, 0.0f) / 1000.0f);
+
+    if (s.voicedSampleCount >= graceSamples && s.releaseMidi < 0) {
+        s.releaseMidi = bestMidi; s.attackSamples = 0; s.noteHeldSamples = 0;
         s.candidateMidi = -1; s.candidateStableSamples = 0;
     }
-    if (s.lockedMidi >= 0) {
-        s.lockEngageSamples += (int)blockSize;
-        if (bestMidi != s.lockedMidi) {
-            if (bestMidi == s.candidateMidi) s.candidateStableSamples += (int)blockSize;
-            else { s.candidateMidi = bestMidi; s.candidateStableSamples = (int)blockSize; }
-            if (s.candidateStableSamples >= reLockStableSamples) {
-                s.lockedMidi = s.candidateMidi; s.lockEngageSamples = 0;
-                s.candidateMidi = -1; s.candidateStableSamples = 0;
+    if (s.releaseMidi >= 0) {
+        s.attackSamples   += (int)blockSize;
+        s.noteHeldSamples += (int)blockSize;
+        if (bestMidi != s.releaseMidi) {
+            if (s.noteHeldSamples >= releaseHoldSamples) {
+                if (bestMidi == s.candidateMidi) s.candidateStableSamples += (int)blockSize;
+                else { s.candidateMidi = bestMidi; s.candidateStableSamples = (int)blockSize; }
+                if (s.candidateStableSamples >= attackStableSamples) {
+                    s.releaseMidi = s.candidateMidi; s.attackSamples = 0; s.noteHeldSamples = 0;
+                    s.candidateMidi = -1; s.candidateStableSamples = 0;
+                }
             }
         } else { s.candidateMidi = -1; s.candidateStableSamples = 0; }
     }
 
     float engageFade = std::max(0.0f, std::min(1.0f,
-                          1000.0f * (float)s.lockEngageSamples / sr / std::max(attackMs, 1.0f)));
+                          1000.0f * (float)s.attackSamples / sr / std::max(attackMs, 1.0f)));
     float lockBypass = 1.0f - engageFade;
 
     float rawTargetMidi = bestMidi + clampedDev;
@@ -139,7 +146,7 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
         float ratio = 1.0f;
         if (isVoiced)
             ratio = computeRatio(tune, pitchHz, activeKeys, (float)block_size, sr,
-                                 attackMs, vibratoAmount);
+                                 attackMs, releaseMs, vibratoAmount);
         else
             tune.reset();
 

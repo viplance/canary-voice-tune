@@ -31,7 +31,7 @@ CanaryVoiceTuneAudioProcessor::CanaryVoiceTuneAudioProcessor()
 CanaryVoiceTuneAudioProcessor::~CanaryVoiceTuneAudioProcessor() {}
 
 int CanaryVoiceTuneAudioProcessor::getNumPrograms() {
-  return 25;
+  return 26;
 }
 
 int CanaryVoiceTuneAudioProcessor::getCurrentProgram() {
@@ -40,10 +40,11 @@ int CanaryVoiceTuneAudioProcessor::getCurrentProgram() {
 
 const juce::String CanaryVoiceTuneAudioProcessor::getProgramName(int index) {
   if (index == 0) return "Default (Chromatic)";
-  
-  int rootIdx = ((index - 1) / 2) % 12;
-  bool isMinor = ((index - 1) % 2 == 1);
-  
+  if (index == 1) return "Disable all";
+
+  int rootIdx = ((index - 2) / 2) % 12;
+  bool isMinor = ((index - 2) % 2 == 1);
+
   static const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
   juce::String name = noteNames[rootIdx];
   name += isMinor ? " Minor" : " Major";
@@ -55,10 +56,11 @@ void CanaryVoiceTuneAudioProcessor::changeProgramName(int index, const juce::Str
 }
 
 bool CanaryVoiceTuneAudioProcessor::isNoteEnabledForPreset(int presetIdx, int midiNote) const {
-  if (presetIdx <= 0 || presetIdx >= 25) return true; // Chromatic by default
-  
-  int rootIdx = ((presetIdx - 1) / 2) % 12;
-  bool isMinor = ((presetIdx - 1) % 2 == 1);
+  if (presetIdx <= 0) return true;  // Chromatic
+  if (presetIdx == 1) return false; // Disable all
+
+  int rootIdx = ((presetIdx - 2) / 2) % 12;
+  bool isMinor = ((presetIdx - 2) % 2 == 1);
   
   int pitchClass = midiNote % 12;
   int interval = (pitchClass - rootIdx + 12) % 12;
@@ -92,10 +94,19 @@ void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
       setParam("SIBILANTS", 0.0f);
       setParam("BREATH", 0.0f);
       setParam("POP", 0.0f);
-      
-      for (int i = 0; i < 88; ++i) {
-          setParam("KEY_" + juce::String(i), 1.0f); // true
-      }
+      for (int i = 0; i < 88; ++i)
+          setParam("KEY_" + juce::String(i), 1.0f);
+  } else if (index == 1) {
+      // Disable all — bypass tuning entirely (no active target notes)
+      setParam("ATTACK", 100.0f);
+      setParam("RELEASE", 250.0f);
+      setParam("VIBRATO", 1.0f);
+      setParam("EXCITER", 0.0f);
+      setParam("SIBILANTS", 0.0f);
+      setParam("BREATH", 0.0f);
+      setParam("POP", 0.0f);
+      for (int i = 0; i < 88; ++i)
+          setParam("KEY_" + juce::String(i), 0.0f);
   } else {
       // Harmonic Presets (C Major, C Minor, etc.)
       setParam("ATTACK", 20.0f);
@@ -105,7 +116,6 @@ void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
       setParam("SIBILANTS", 0.0f);
       setParam("BREATH", -35.0f);
       setParam("POP", -12.0f);
-      
       for (int i = 0; i < 88; ++i) {
           bool enabled = isNoteEnabledForPreset(index, i + 21);
           setParam("KEY_" + juce::String(i), enabled ? 1.0f : 0.0f);
@@ -212,17 +222,19 @@ void CanaryVoiceTuneAudioProcessor::buildMonoMix(
 }
 
 void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
-  lockedMidi          = -1;
-  lockEngageSamples   = 0;
-  lockReleaseSamples  = 0;
-  smoothedMidi        = -1.0f;
-  smoothedTargetMidi  = -1.0f;
-  voicedSampleCount   = 0;
+  releaseMidi            = -1;
+  attackSamples          = 0;
+  noteHeldSamples        = 0;
+  smoothedMidi           = -1.0f;
+  smoothedTargetMidi     = -1.0f;
+  voicedSampleCount      = 0;
+  candidateMidi          = -1;
+  candidateStableSamples = 0;
 }
 
 int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
     float detectedHz, const bool* activeKeys, float blockSize, float sr,
-    float attackMs, float vibratoAmount,
+    float attackMs, float releaseMs, float vibratoAmount,
     float& outRatio) {
   voicedSampleCount += (int)blockSize;
 
@@ -284,56 +296,61 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // The incumbent gets a symmetric stick-band of `hysteresisSt` semitones at
   // that midpoint to suppress flicker from pitch jitter.
   int bestMidi = NoteSelector::chooseActiveNote(activeKeys, lockPitch,
-                                                lockedMidi, hysteresisSt);
+                                                releaseMidi, hysteresisSt);
   if (bestMidi < 0) bestMidi = (int)std::round(lockPitch);
 
-  // ---- Note lock ----------------------------------------------------------
-  // First lock: capture the first stable bestMidi after a 50 ms grace.
-  // Re-lock: instead of "any 120 ms drift > 1.5 st" (which was both too
-  // strict for legato moves and too lenient for sub-semitone wobble), we
-  // require the candidate to be a *single*, *unchanged* bestMidi held for
-  // `attackMs` worth of samples. That ties stabilisation latency to the
-  // same control the user uses for snap responsiveness.
-  const int lockGraceSamples   = (int)(sr * 0.050f);
-  const int reLockStableSamples = (int)(sr * juce::jmax(attackMs, 1.0f) / 1000.0f);
-  if (voicedSampleCount >= lockGraceSamples && lockedMidi < 0) {
-    lockedMidi = bestMidi;
-    lockEngageSamples = 0;
-    lockReleaseSamples = 0;
-    candidateMidi = -1;
+  // ---- Note capture & Release inertia ------------------------------------
+  // First capture: latch the first stable bestMidi after a 50 ms grace.
+  // Note switch: allowed only after the current note has been held for at
+  //   least releaseMs.  Within that window the current note is "sticky" —
+  //   the singer must hold the new note for attackMs before we actually
+  //   switch.  This decouples Attack (how fast we glide onto a new note)
+  //   from Release (how long the current note holds before we even start
+  //   considering a switch).
+  const int graceSamples        = (int)(sr * 0.050f);
+  const int attackStableSamples = (int)(sr * juce::jmax(attackMs, 1.0f) / 1000.0f);
+  const int releaseHoldSamples  = (int)(sr * juce::jmax(releaseMs, 0.0f) / 1000.0f);
+
+  if (voicedSampleCount >= graceSamples && releaseMidi < 0) {
+    releaseMidi            = bestMidi;
+    attackSamples          = 0;
+    noteHeldSamples        = 0;
+    candidateMidi          = -1;
     candidateStableSamples = 0;
   }
-  if (lockedMidi >= 0) {
-    lockEngageSamples += (int)blockSize;
+  if (releaseMidi >= 0) {
+    attackSamples   += (int)blockSize;
+    noteHeldSamples += (int)blockSize;
 
-    if (bestMidi != lockedMidi) {
-      if (bestMidi == candidateMidi) {
-        candidateStableSamples += (int)blockSize;
-      } else {
-        candidateMidi = bestMidi;
-        candidateStableSamples = (int)blockSize;
-      }
-      if (candidateStableSamples >= reLockStableSamples) {
-        lockedMidi = candidateMidi;
-        lockEngageSamples = 0;
-        lockReleaseSamples = 0;
-        candidateMidi = -1;
-        candidateStableSamples = 0;
+    if (bestMidi != releaseMidi) {
+      // Only propose a switch once the current note has been held for at
+      // least releaseMs — before that we ignore the incoming bestMidi.
+      if (noteHeldSamples >= releaseHoldSamples) {
+        if (bestMidi == candidateMidi) {
+          candidateStableSamples += (int)blockSize;
+        } else {
+          candidateMidi          = bestMidi;
+          candidateStableSamples = (int)blockSize;
+        }
+        if (candidateStableSamples >= attackStableSamples) {
+          releaseMidi            = candidateMidi;
+          attackSamples          = 0;
+          noteHeldSamples        = 0;
+          candidateMidi          = -1;
+          candidateStableSamples = 0;
+        }
       }
     } else {
-      // Singer is back on the locked note — drop the pending candidate.
-      candidateMidi = -1;
+      // Singer is back on the held note — drop any pending candidate.
+      candidateMidi          = -1;
       candidateStableSamples = 0;
     }
   }
 
-  // ---- Lock-engage fade ---------------------------------------------------
-  // While engaging, blend toward dry so the attack curve is audible. Once
-  // engaged we always target an active key — if the singer drifts far from
-  // the locked note we follow the closest active key (`bestMidi`) instead
-  // of leaking the raw pitch, otherwise inactive notes would sound.
+  // ---- Attack fade-in -----------------------------------------------------
+  // While attacking, blend toward dry so the Attack curve is audible.
   float engageFade = juce::jlimit(0.0f, 1.0f,
-                                  1000.0f * (float)lockEngageSamples / sr / attackMs);
+                                  1000.0f * (float)attackSamples / sr / attackMs);
   float lockBypass = 1.0f - engageFade;
   // Incumbent stickiness is now handled symmetrically and spacing-aware inside
   // NoteSelector::chooseActiveNote (above), so the previous fixed "snap to the
@@ -510,25 +527,25 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float effectiveReleaseMs   = releaseMs;
   if (isConsonant) {
     resetVoicingState();
-    releaseHoldSamplesRemaining = 0;
-    releaseHoldMidi = -1;
+    releaseTailSamplesRemaining = 0;
+    releaseTailMidi = -1;
     consonantFastRelease = true;
     effectiveReleaseMs = 10.0f;
   } else if (isVoiced && !wasVoiced) {
     resetVoicingState();
-    releaseHoldSamplesRemaining = 0;
-    releaseHoldMidi = -1;
+    releaseTailSamplesRemaining = 0;
+    releaseTailMidi = -1;
   } else if (!isVoiced) {
-    if (wasVoiced && lockedMidi >= 0) {
-      releaseHoldMidi = lockedMidi;
-      releaseHoldSamplesRemaining =
+    if (wasVoiced && releaseMidi >= 0) {
+      releaseTailMidi = releaseMidi;
+      releaseTailSamplesRemaining =
           (int)(releaseMs * 0.001f * (float)getSampleRate());
     }
-    if (releaseHoldSamplesRemaining > 0) {
-      releaseHoldSamplesRemaining -= buffer.getNumSamples();
+    if (releaseTailSamplesRemaining > 0) {
+      releaseTailSamplesRemaining -= buffer.getNumSamples();
     } else {
       resetVoicingState();
-      releaseHoldMidi = -1;
+      releaseTailMidi = -1;
     }
   }
   wasVoiced = isVoiced;
@@ -540,7 +557,7 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
     displayedMidi = chooseTargetNoteAndRatio(
         detectedHz, activeKeys,
         (float)buffer.getNumSamples(), (float)getSampleRate(),
-        attackMs, vibratoAmount, targetRatio);
+        attackMs, releaseMs, vibratoAmount, targetRatio);
   }
 
   // ---- Notify UI of any note-change event --------------------------------

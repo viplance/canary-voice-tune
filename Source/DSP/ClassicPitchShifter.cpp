@@ -5,6 +5,59 @@
 ClassicPitchShifter::ClassicPitchShifter() {}
 ClassicPitchShifter::~ClassicPitchShifter() {}
 
+double ClassicPitchShifter::findOptimalJump(double nominalPeriod) const
+{
+    // Correlate a short window at the current write position in the RAW input
+    // history (corrHistoryBuffer) against windows shifted back by `lag` samples,
+    // searching ±30% around nominalPeriod.
+    // Using raw input avoids phase artefacts from previously shifted audio.
+    static constexpr int kCorrWindow = 128;
+    const float* buf = corrHistoryBuffer.getReadPointer(0);
+
+    int lagMin = (int)std::max(8.0,  nominalPeriod * 0.70);
+    int lagMax = (int)std::min((double)(kHistorySize / 4), nominalPeriod * 1.30);
+
+    // Reference window: kCorrWindow samples ending at corrWritePos
+    int refEnd = corrWritePos;
+    int refStart = refEnd - kCorrWindow;
+
+    // Compute energy of reference window for normalisation
+    double refEnergy = 0.0;
+    for (int i = 0; i < kCorrWindow; ++i)
+    {
+        int pos = refStart + i;
+        float v = buf[(pos + kCorrHistorySize * 10) % kCorrHistorySize];
+        refEnergy += (double)v * v;
+    }
+    // If signal is too quiet, fall back to nominal period
+    if (refEnergy < 1e-6) return nominalPeriod;
+
+    double bestCorr  = -2.0;
+    int    bestLag   = (int)std::round(nominalPeriod);
+
+    for (int lag = lagMin; lag <= lagMax; ++lag)
+    {
+        double corr    = 0.0;
+        double lagEnergy = 0.0;
+        for (int i = 0; i < kCorrWindow; ++i)
+        {
+            int rPos = refStart + i;
+            int lPos = rPos - lag;
+            float rv = buf[(rPos + kCorrHistorySize * 10) % kCorrHistorySize];
+            float lv = buf[(lPos + kCorrHistorySize * 10) % kCorrHistorySize];
+            corr      += (double)rv * lv;
+            lagEnergy += (double)lv * lv;
+        }
+        double normCorr = corr / (std::sqrt(refEnergy * lagEnergy) + 1e-10);
+        if (normCorr > bestCorr)
+        {
+            bestCorr = normCorr;
+            bestLag  = lag;
+        }
+    }
+    return (double)bestLag;
+}
+
 void ClassicPitchShifter::prepare(double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
@@ -18,6 +71,10 @@ void ClassicPitchShifter::prepare(double sampleRate, int samplesPerBlock)
     historyBuffer.setSize(numChans, kHistorySize, false, true, true);
     historyBuffer.clear();
     absoluteWritePos = 0;
+
+    corrHistoryBuffer.setSize(1, kCorrHistorySize, false, true, true);
+    corrHistoryBuffer.clear();
+    corrWritePos = 0;
     for (auto& addr : absoluteOutputAddr) {
         addr = 0.0;
     }
@@ -32,6 +89,18 @@ void ClassicPitchShifter::prepare(double sampleRate, int samplesPerBlock)
     }
     for (auto& s : samplesSinceLastJump) {
         s = 99999;
+    }
+    for (auto& p : prevR) {
+        p = 1.0f;
+    }
+    for (auto& s : strandedSamples) {
+        s = 0;
+    }
+    for (auto& b : crossFadeIsOnset) {
+        b = false;
+    }
+    for (auto& u : unvoicedSamples) {
+        u = 99999; // start as "long unvoiced" so first onset always fires
     }
 
     isVoiced_ = false;
@@ -140,9 +209,14 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
     constexpr int kGuardSamples = 64;
 
     for (int i = 0; i < numSamples; ++i) {
-        // Write the incoming sample to the circular history buffer
+        // Write the incoming sample to the circular history buffers.
+        // corrHistoryBuffer stores raw (unprocessed) input for correlation.
+        float rawL = L[i];
+        corrHistoryBuffer.setSample(0, corrWritePos % kCorrHistorySize, rawL);
+        corrWritePos++;
+
         for (int c = 0; c < procChans; ++c) {
-            float s = (c == 0) ? L[i] : R[i];
+            float s = (c == 0) ? rawL : R[i];
             historyBuffer.setSample(c, absoluteWritePos % kHistorySize, s);
         }
 
@@ -164,53 +238,118 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                 smoothedPeriodSamples[c] = 0.0;
             }
 
-            double period = smoothedPeriodSamples[c];
+            // smoothedPeriodSamples is used only for threshold decisions (stable).
+            // jumpPeriod uses the instantaneous targetPeriod so the pointer lands
+            // at the correct phase even when the note just changed and the smoother
+            // hasn't caught up yet (a 24-sample lag at B3->D#4 = 56° phase error).
+            // Sanity clamp: if targetPeriod deviates by >2x from smoothed, the
+            // detector had a transient octave-flip — fall back to smoothed so the
+            // jump doesn't land a half-period off (polarity flip artefact).
+            double period     = smoothedPeriodSamples[c];
+            double jumpPeriod = period; // fallback
+            if (targetPeriod > 0.0f) {
+                double ratio = (period > 0.0) ? (double)targetPeriod / period : 1.0;
+                // Accept targetPeriod only if it's within a musical fifth of smoothed
+                // (factor 0.67–1.5).  Outside that range the detector had a transient
+                // octave flip and the jump would land a half-period off (polarity flip).
+                jumpPeriod = (ratio > 0.67 && ratio < 1.5) ? (double)targetPeriod : period;
+            }
             samplesSinceLastJump[c]++;
 
             bool crossFadeTriggered = false;
+            bool onsetJump = false;
             double jumpAmount = 0.0;
 
             if (period > 0.0) {
                 // Syllable Onset Transition Cross-fade:
                 // Pre-emptively shift the play pointer back by one period + guard band
                 // and cross-fade from the unvoiced consonant to the periodic voiced wave.
+                // Only fire if the channel has been unvoiced long enough for the DLL
+                // tracker to have reached the guard position (~2 periods).  Shorter
+                // gaps (vibrato amplitude dips, breaths within a phrase) don't warrant
+                // a pointer repositioning — the pointer is still close to correct phase.
+                bool trueOnset = (unvoicedSamples[c] >= (int)(2.0 * period));
+                unvoicedSamples[c] = 0; // reset: we are back in voiced mode
+
                 if (! wasVoicedState[c]) {
                     wasVoicedState[c] = true;
-                    double targetVoicedAddr = (double)(absoluteWritePos - (int64_t)period - kGuardSamples);
-                    
-                    crossFadeOutputAddr[c] = absoluteOutputAddr[c] + 1.0;
-                    crossFadeGain[c] = 1.0f;
-                    absoluteOutputAddr[c] = targetVoicedAddr;
-                    samplesSinceLastJump[c] = 0; // Reset jump counter on onset
+                    if (trueOnset) {
+                        // The DLL tracker already sits at writePos - guard after a true
+                        // silence, so absoluteOutputAddr[c] is already correct.
+                        // We don't reposition — just reset bookkeeping so the first
+                        // cycle jump can fire after the refractory window.
+                        samplesSinceLastJump[c] = 0;
+                        strandedSamples[c] = 0;
+                        // No pointer repositioning, no crossfade: avoids amplitude dip
+                        // on rising onsets caused by the old period-look-back placement.
+                    }
+                    // If not a true onset: pointer was still near correct phase, continue.
                 }
 
                 // Advance fractional output play pointer
                 absoluteOutputAddr[c] += r;
 
-                // Only allow pointer jumps if the refractory period has expired to prevent double-jumps/clicks
-                if (samplesSinceLastJump[c] >= 128) {
+                // Refractory: wait at least one crossfade duration between jumps so
+                // the previous blend finishes before the next starts — overlapping
+                // crossfades overwrite the secondary pointer and create a click.
+                // Also enforce at least one voice period so we don't jump twice in
+                // the same cycle when the ratio is large.
+                int refractory = (int)std::max((double)kCrossFadeDuration, jumpPeriod);
+                if (samplesSinceLastJump[c] >= refractory) {
                     // Overrun prevention (pitching up)
                     if (r > 1.0f && absoluteOutputAddr[c] >= (double)(absoluteWritePos - kGuardSamples)) {
-                        jumpAmount = -period;
+                        // Use correlation-refined period so the crossfade secondary
+                        // lands in phase with the primary (prevents destructive
+                        // cancellation when vibrato shifts the true period away
+                        // from the nominal estimate).
+                        jumpAmount = -findOptimalJump(jumpPeriod);
                         crossFadeTriggered = true;
                     }
                     // Underrun prevention (pitching down)
                     else if (r < 1.0f && ((double)(absoluteWritePos - kGuardSamples) - absoluteOutputAddr[c]) > (2.0 * period)) {
-                        jumpAmount = period;
+                        jumpAmount = findOptimalJump(jumpPeriod);
                         crossFadeTriggered = true;
                     }
+                    // Direction-change rescue: pointer is stranded too close to the
+                    // write head after a sustained pitch-up phase (vibrato peak).
+                    // The standard underrun threshold (2*period) takes 200-300 ms to
+                    // fire in this case, causing phase-drift stutter on vibrato.
+                    // Only rescue if the pointer has been close to the write head for
+                    // at least one full period of samples — this filters out normal
+                    // onset transitions where ratio also crosses 1.0 briefly.
+                    else if (r <= 1.0f && period > 0.0) {
+                        double distance = (double)(absoluteWritePos - kGuardSamples) - absoluteOutputAddr[c];
+                        if (distance < 0.5 * period) {
+                            strandedSamples[c]++;
+                        } else {
+                            strandedSamples[c] = 0;
+                        }
+                        if (prevR[c] > 1.0f && strandedSamples[c] > (int)period) {
+                            jumpAmount = findOptimalJump(jumpPeriod);
+                            crossFadeTriggered = true;
+                            strandedSamples[c] = 0;
+                        }
+                    } else {
+                        strandedSamples[c] = 0;
+                    }
                 }
+                prevR[c] = r;
             } else {
                 // Syllable Offset Transition Cross-fade (Voiced to Unvoiced):
                 // Smoothly cross-fade from the active voiced play pointer position
                 // to the clean unvoiced guard tracking position to prevent sudden pointer speed jumps!
+                unvoicedSamples[c]++; // count how long we've been unvoiced
                 if (wasVoicedState[c]) {
                     wasVoicedState[c] = false;
                     double targetUnvoicedAddr = (double)(absoluteWritePos - kGuardSamples);
-                    
+
+                    // Use a short onset-duration fade so the unvoiced tail doesn't
+                    // bleed the secondary pointer far into the past.
                     crossFadeOutputAddr[c] = absoluteOutputAddr[c] + r;
                     crossFadeGain[c] = 1.0f;
+                    crossFadeIsOnset[c] = true; // fade quickly like an onset
                     absoluteOutputAddr[c] = targetUnvoicedAddr;
+                    strandedSamples[c] = 0;
                 }
 
                 wasVoicedState[c] = false;
@@ -221,12 +360,21 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                 absoluteOutputAddr[c] += 0.01 * (currentDistance - (double)kGuardSamples);
             }
 
-            // Trigger pointer cross-fade to smooth cycle repeats/drops
+            // Trigger pointer cross-fade to smooth cycle repeats/drops.
+            // If a crossfade is already in progress, the new primary position
+            // becomes the secondary for the NEXT crossfade, starting from the
+            // currently-blended gain so the fade continues from where it is
+            // rather than resetting to 1.0 and creating a sudden level jump.
             if (crossFadeTriggered) {
                 crossFadeOutputAddr[c] = absoluteOutputAddr[c];
-                crossFadeGain[c] = 1.0f;
+                // Preserve remaining gain if a crossfade is active so we don't
+                // snap the secondary level back to full and cause a discontinuity.
+                if (crossFadeGain[c] <= 0.001f)
+                    crossFadeGain[c] = 1.0f;
                 absoluteOutputAddr[c] += jumpAmount;
                 samplesSinceLastJump[c] = 0; // Reset jump counter
+                strandedSamples[c] = 0;
+                crossFadeIsOnset[c] = onsetJump;
             }
 
             // Interpolate resampled voice sample using premium cubic spline Hermite
@@ -239,8 +387,12 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                 
                 // Advance secondary pointer at matching speed
                 crossFadeOutputAddr[c] += r;
-                // Decrement cross-fade gain
-                crossFadeGain[c] -= (1.0f / (float)kCrossFadeDuration);
+                // Decrement gain: onset fades quickly (crisp attack), cycle
+                // jumps fade slowly (inaudible blend over many voice periods).
+                float fadeStep = crossFadeIsOnset[c]
+                    ? (1.0f / (float)kOnsetCrossFadeDuration)
+                    : (1.0f / (float)kCrossFadeDuration);
+                crossFadeGain[c] -= fadeStep;
                 if (crossFadeGain[c] < 0.0f) {
                     crossFadeGain[c] = 0.0f;
                 }
