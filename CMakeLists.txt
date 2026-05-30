@@ -130,6 +130,8 @@ target_sources(CanaryVoiceTune_Tests PRIVATE
     test/Test_NoteSelector.cpp
     test/Test_LongMelody.h
     test/Test_LongMelody.cpp
+    test/Test_19Notes.h
+    test/Test_19Notes.cpp
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
     Source/DSP/NoteSelector.cpp

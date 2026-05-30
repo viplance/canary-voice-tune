@@ -269,11 +269,11 @@ float PitchDetector::getPitchYin() {
     }
   }
 
-  // 2. Cumulative mean normalized difference function
+  // 2. Cumulative mean normalized difference function (full pass — no early
+  // exit so that steps 4b/4c can inspect the CMNDF at any tau without
+  // reading stale raw-difference values left by an early break).
   yinBuffer[0] = 1.0f;
   float runningSum = 0.0f;
-  int tauEstimate = -1;
-
   for (int tau = 1; tau < halfBufferSize; tau++) {
     runningSum += yinBuffer[tau];
     if (runningSum == 0.0f) {
@@ -281,12 +281,15 @@ float PitchDetector::getPitchYin() {
     } else {
       yinBuffer[tau] *= tau / runningSum;
     }
+  }
 
-    // 3. Absolute threshold — find the FIRST tau below tolerance, then
-    // descend to the local minimum. Picking the first qualifier (rather
-    // than the global minimum) is what suppresses 2× harmonic errors
-    // because the true fundamental's tau is shorter than its harmonic's.
-    if (tauEstimate == -1 && yinBuffer[tau] < yinTolerance) {
+  // 3. Absolute threshold — find the FIRST tau below tolerance, then
+  // descend to the local minimum. Picking the first qualifier (rather
+  // than the global minimum) is what suppresses 2× harmonic errors
+  // because the true fundamental's tau is shorter than its harmonic's.
+  int tauEstimate = -1;
+  for (int tau = 1; tau < halfBufferSize; tau++) {
+    if (yinBuffer[tau] < yinTolerance) {
       while (tau + 1 < halfBufferSize && yinBuffer[tau + 1] < yinBuffer[tau]) {
         tau++;
       }
@@ -326,10 +329,21 @@ float PitchDetector::getPitchYin() {
       for (int t = searchLo; t <= searchHi; ++t) {
         if (yinBuffer[t] < bestV) { bestV = yinBuffer[t]; bestT = t; }
       }
-      // Require the long-tau minimum to be clearly deeper (≤ 70% of the
-      // short-tau value) and only switch if the short-tau minimum is not
-      // already extremely clean (curVal > 0.35f).
-      if (curVal > 0.35f && bestV < curVal * 0.7f && bestV < 0.15f) {
+      // Check that the double-tau candidate is actually a local minimum.
+      bool isLocalMin = (bestT > 1 && bestT < halfBufferSize - 1 &&
+                         yinBuffer[bestT] <= yinBuffer[bestT - 1] &&
+                         yinBuffer[bestT] <= yinBuffer[bestT + 1]);
+
+      // Original condition: switch to double_tau only when current tau is poor.
+      bool origCondition = (curVal > 0.35f && bestV < curVal * 0.7f && bestV < 0.15f);
+      // Extended condition: 2nd-harmonic trap — even when the current tau has a
+      // clean dip (curVal ≤ 0.35), if double_tau is substantially deeper
+      // (≤ 75% of current) and reasonably clean (< 0.15), the current tau is
+      // likely locking onto the 2nd harmonic of the true fundamental.
+      // This fixes octave-up jumps on voiced vowels with strong 2nd harmonics.
+      bool extCondition = (bestV < curVal * 0.75f && bestV < 0.15f);
+
+      if (isLocalMin && (origCondition || extCondition)) {
         tauEstimate = bestT;
       }
     }

@@ -7,6 +7,7 @@
 #include "Test_HighlightOctave.h"
 #include "Test_NoteSelector.h"
 #include "Test_LongMelody.h"
+#include "Test_19Notes.h"
 #include "TestHelpers.h"
 #include "../Source/DSP/PitchDetector.h"
 #include <iostream>
@@ -105,6 +106,9 @@ int main(int argc, char* argv[]) {
     // Run Long Melody Octave-Jump Detection Test (Test 9)
     std::cout << "\nTest 9: Verifying octave-up jump detection on long_melody.wav" << std::endl;
     runLongMelodyTest("test/samples/long_melody.wav");
+
+    // Run 19-Note Pitch-Detector Accuracy Test (Test 10)
+    run19NotesTest("test/samples/long_melody.wav");
 
     std::cout << "\nAll tests PASSED successfully!" << std::endl;
     return 0;

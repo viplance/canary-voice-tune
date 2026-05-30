@@ -6,7 +6,13 @@
       "Bash(sed -i '' '/setParam\\(\"RANGE\"/d' Source/PluginProcessor.cpp)",
       "Bash(sed -i '' '/juce::ParameterID{\"RANGE\", 1}, \"Range\", 0.0f, 100.0f, 0.0f\\)\\);/d' Source/PluginProcessor.cpp)",
       "Bash(sed -i '' '/float correctionStrength = \\(rangeParam   ? rangeParam->load\\(\\)    : 0.0f\\) \\\\/ 100.0f;/d' Source/PluginProcessor.cpp)",
-      "Bash(sed -n '542,545p' Source/PluginProcessor.cpp)"
+      "Bash(sed -n '542,545p' Source/PluginProcessor.cpp)",
+      "Bash(awk -F'Pitch=' '{print $2}')",
+      "Bash(awk '{print $1}')",
+      "Bash(awk '{hz=$1+0; if\\(hz>400\\) print \"OCTAVE_UP: \"hz\" Hz\"}')",
+      "Bash(awk '{hz=$1+0; if\\(hz>400\\) count++} END {print \"Octave-up jumps: \"count}')",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 install *)"
     ]
   }
 }
