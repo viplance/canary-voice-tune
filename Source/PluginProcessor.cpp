@@ -236,6 +236,7 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
     float detectedHz, const bool* activeKeys, float blockSize, float sr,
     float attackMs, float releaseMs, float vibratoAmount,
     float& outRatio) {
+  juce::ignoreUnused(releaseMs);
   voicedSampleCount += (int)blockSize;
 
   float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
@@ -309,7 +310,9 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   //   considering a switch).
   const int graceSamples        = (int)(sr * 0.050f);
   const int attackStableSamples = (int)(sr * juce::jmax(attackMs, 1.0f) / 1000.0f);
-  const int releaseHoldSamples  = (int)(sr * juce::jmax(releaseMs, 0.0f) / 1000.0f);
+  // Decoupled responsive note-switching refractory period (fixed 30 ms) to allow
+  // rapid and precise melodic transitions, independent of vocal effects releaseMs.
+  const int releaseHoldSamples  = (int)(sr * 0.030f);
 
   if (voicedSampleCount >= graceSamples && releaseMidi < 0) {
     releaseMidi            = bestMidi;
@@ -372,7 +375,7 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // Short portamento smooths the ±1 semitone step that occurs when bestMidi
   // crosses a bucket boundary.
   float blockDtMs       = 1000.0f * blockSize / sr;
-  float portamentoTimeMs = 15.0f;
+  float portamentoTimeMs = 30.0f;
   float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
   if (smoothedTargetMidi < 0.0f) smoothedTargetMidi = rawTargetMidi;
   else                            smoothedTargetMidi += targetAlpha

@@ -35,6 +35,7 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
                    float blockSize, float sr, float attackMs, float releaseMs,
                    float vibratoAmount)
 {
+    juce::ignoreUnused(releaseMs);
     s.voicedSampleCount += (long)blockSize;
     float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
 
@@ -63,7 +64,9 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
 
     const int graceSamples        = (int)(sr * 0.050f);
     const int attackStableSamples = (int)(sr * std::max(attackMs, 1.0f) / 1000.0f);
-    const int releaseHoldSamples  = (int)(sr * std::max(releaseMs, 0.0f) / 1000.0f);
+    // Decoupled responsive note-switching refractory period (fixed 30 ms) to allow
+    // rapid and precise melodic transitions, independent of vocal effects releaseMs.
+    const int releaseHoldSamples  = (int)(sr * 0.030f);
 
     if (s.voicedSampleCount >= graceSamples && s.releaseMidi < 0) {
         s.releaseMidi = bestMidi; s.attackSamples = 0; s.noteHeldSamples = 0;
@@ -92,7 +95,7 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
     rawTargetMidi = rawTargetMidi * (1.0f - lockBypass) + effectiveMidi * lockBypass;
 
     float blockDtMs = 1000.0f * blockSize / sr;
-    float portamentoTimeMs = 15.0f;
+    float portamentoTimeMs = 30.0f;
     float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
     if (s.smoothedTargetMidi < 0.0f) s.smoothedTargetMidi = rawTargetMidi;
     else s.smoothedTargetMidi += targetAlpha * (rawTargetMidi - s.smoothedTargetMidi);

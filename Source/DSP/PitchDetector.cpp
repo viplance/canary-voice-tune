@@ -342,7 +342,8 @@ float PitchDetector::getPitchYin() {
         tauEstimate = tau;
       }
     }
-    if (minVal > 0.5f) {
+    float maxAllowedMin = (lastValidPitch <= 0.0f) ? 0.22f : 0.45f;
+    if (minVal > maxAllowedMin) {
       return 0.0f; // Unvoiced
     }
   }
