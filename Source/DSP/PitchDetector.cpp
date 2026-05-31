@@ -4,14 +4,15 @@
 
 PitchDetector::PitchDetector() {
   circularBuffer.resize(yinBufferSize, 0.0f);
+  yinBuffer.resize(yinBufferSize / 2, 0.0f);
 }
 
 PitchDetector::~PitchDetector() {}
 
 void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
-  juce::ignoreUnused(samplesPerBlock);
   currentSampleRate = sampleRate > 0 ? sampleRate : 44100.0;
   std::fill(circularBuffer.begin(), circularBuffer.end(), 0.0f);
+  std::fill(yinBuffer.begin(), yinBuffer.end(), 0.0f);
   writeIndex = 0;
   lastValidPitch = 0.0f;
   instantPitch = 0.0f;
@@ -58,9 +59,10 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   midLpFilter.reset();
   highFilter.reset();
 
-  lowScratch.resize(2048, 0.0f);
-  midScratch.resize(2048, 0.0f);
-  highScratch.resize(2048, 0.0f);
+  int scratchSize = std::max(2048, samplesPerBlock + 16);
+  lowScratch.resize((size_t)scratchSize, 0.0f);
+  midScratch.resize((size_t)scratchSize, 0.0f);
+  highScratch.resize((size_t)scratchSize, 0.0f);
 }
 
 
@@ -81,9 +83,9 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   // kept RMS above the threshold long after the signal faded (old samples
   // still in the buffer) and caused YIN to run on stale data → spurious
   // low-pitch detections on the note tail. Block-level RMS reacts instantly.
-  float rms = 0.0f;
-  for (int i = 0; i < numSamples; ++i) rms += audioData[i] * audioData[i];
-  rms = (numSamples > 0) ? std::sqrt(rms / numSamples) : 0.0f;
+  float sumSq = 0.0f;
+  for (int i = 0; i < numSamples; ++i) sumSq += audioData[i] * audioData[i];
+  float rms = (numSamples > 0) ? std::sqrt(sumSq / numSamples) : 0.0f;
 
   // ---- Consonant detection on the JUST-arrived block ---------------------
   // Three cheap features, computed only on the new samples (not the whole
@@ -138,11 +140,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   // Voiced vowels have significant low frequency energy (< 100 Hz).
   // Sibilants/consonants have significant high frequency energy (> 10 kHz).
   
-  if (lowScratch.size() < (size_t)numSamples) {
-    lowScratch.resize((size_t)numSamples + 16, 0.0f);
-    midScratch.resize((size_t)numSamples + 16, 0.0f);
-    highScratch.resize((size_t)numSamples + 16, 0.0f);
-  }
+  jassert (lowScratch.size() >= (size_t)numSamples);
 
   std::copy_n(audioData, numSamples, lowScratch.data());
   std::copy_n(audioData, numSamples, midScratch.data());
@@ -291,7 +289,8 @@ float PitchDetector::process(const float *audioData, int numSamples) {
 
 float PitchDetector::getPitchYin() {
   int halfBufferSize = yinBufferSize / 2;
-  std::vector<float> yinBuffer(halfBufferSize, 0.0f);
+  jassert (yinBuffer.size() >= (size_t)halfBufferSize);
+  std::fill(yinBuffer.begin(), yinBuffer.end(), 0.0f);
   // Default to "no clear minimum"; overwritten below once we pick tau.
   lastYinMinValue = 1.0f;
 

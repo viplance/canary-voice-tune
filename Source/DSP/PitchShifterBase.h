@@ -7,6 +7,7 @@ public:
     virtual ~PitchShifterBase() = default;
 
     virtual void prepare(double sampleRate, int samplesPerBlock) = 0;
+    virtual void reset() = 0;
     virtual void process(juce::AudioBuffer<float>& buffer) = 0;
     virtual int getLatencySamples() const = 0;
     virtual void setTargetShift(float ratio, float attackMs, float releaseMs,

@@ -13,6 +13,7 @@ public:
     ~ClassicPitchShifter() override;
 
     void prepare(double sampleRate, int samplesPerBlock) override;
+    void reset() override;
     void process(juce::AudioBuffer<float>& buffer) override;
     int getLatencySamples() const override { return 0; } // Zero latency!
 

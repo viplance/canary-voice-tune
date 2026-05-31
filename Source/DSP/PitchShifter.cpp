@@ -19,6 +19,13 @@ void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
     vocalEffects.prepare(sampleRate, samplesPerBlock);
 }
 
+void PitchShifter::reset()
+{
+    modernEngine->reset();
+    classicEngine->reset();
+    vocalEffects.reset();
+}
+
 void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 {
     if (activeEngine != nullptr) {
@@ -90,7 +97,7 @@ void PitchShifter::setTuningMode(int modeIndex)
         } else {
             activeEngine = classicEngine.get();
         }
-        // Prepare on engine switch to ensure fresh history
-        activeEngine->prepare(storedSampleRate, storedSamplesPerBlock);
+        // Real-time safe state reset instead of full reallocation
+        activeEngine->reset();
     }
 }

@@ -46,8 +46,9 @@ private:
   // to 23 ms, i.e. fundamentals down to ~43 Hz, with enough overlap at long
   // periods that the difference function is well-conditioned (the main
   // remedy for YIN's classic octave-up errors on low male voices).
-  static const int yinBufferSize = 2048;
+  static constexpr int yinBufferSize = 2048;
   std::vector<float> circularBuffer;
+  std::vector<float> yinBuffer;
   int writeIndex = 0;
 
   // 0.10 is the canonical YIN absolute threshold from the de Cheveigné &
@@ -60,7 +61,7 @@ private:
   float instantPitch = 0.0f;
   float confidence = 0.0f;
   int holdCounter = 0;
-  static const int holdFrames = 8;
+  static constexpr int holdFrames = 8;
 
   // Per-block consonant classifier (computed inside process()).
   bool  consonantFlag = false;
@@ -77,7 +78,7 @@ private:
 
   // Short median filter on recent raw pitches, to suppress single-frame
   // octave jumps (one aberrant detection in three is rejected).
-  static const int kMedianHistory = 5;
+  static constexpr int kMedianHistory = 5;
   float medianHistory[kMedianHistory] = {0,0,0,0,0};
   int   medianIndex = 0;
   int   medianFilled = 0;
@@ -85,7 +86,7 @@ private:
   // Used to flush the median ring early so a new-note onset doesn't inherit
   // pitches from a previous phrase separated by silence.
   int   silentBlockCount = 0;
-  static const int kMedianFlushBlocks = 2; // flush after this many silent blocks
+  static constexpr int kMedianFlushBlocks = 2; // flush after this many silent blocks
 
   // Slow-moving pitch anchor: EMA that only updates when the current estimate
   // is within ±6 semitones of itself.  Used by the octave-continuity guard to

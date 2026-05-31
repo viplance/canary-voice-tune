@@ -143,16 +143,17 @@ void VocalEffectsProcessor::processPrePitch(juce::AudioBuffer<float>& buffer, in
     int N = breathBlockIndex;
     breathBlockIndex = (breathBlockIndex + 1) % 256;
 
-    float rms = 0.0f;
-    for (int i = 0; i < numSamples; ++i) {
-        float sumSq = 0.0f;
-        for (int c = 0; c < procChans; ++c) {
-            float s = (c == 0) ? L[i] : R[i];
-            sumSq += s * s;
-        }
-        rms += sumSq / (float)procChans;
+    float sumSq = 0.0f;
+    if (procChans == 1) {
+        for (int i = 0; i < numSamples; ++i) sumSq += L[i] * L[i];
+    } else if (procChans == 2) {
+        float sumSqL = 0.0f;
+        float sumSqR = 0.0f;
+        for (int i = 0; i < numSamples; ++i) sumSqL += L[i] * L[i];
+        for (int i = 0; i < numSamples; ++i) sumSqR += R[i] * R[i];
+        sumSq = (sumSqL + sumSqR) * 0.5f;
     }
-    rms = std::sqrt(rms / (float)numSamples);
+    float rms = (numSamples > 0) ? std::sqrt(sumSq / numSamples) : 0.0f;
     breathInputRms[(size_t)N] = rms;
 
     int delayBlocks = (blockSize > 0) ? (int)std::round((float)engineLatencySamples / (float)blockSize) : 0;
@@ -176,10 +177,7 @@ void VocalEffectsProcessor::processPrePitch(juce::AudioBuffer<float>& buffer, in
 
     // ----- 0b) Adaptive pop filter -----
     if (popThresholdDb < -0.01f) {
-        if (popBassTemp.getNumSamples() < numSamples) {
-            popBassTemp.setSize(numChans, numSamples + 16, false, true, true);
-            popHighTemp.setSize(numChans, numSamples + 16, false, true, true);
-        }
+        jassert (popBassTemp.getNumSamples() >= numSamples);
         for (int c = 0; c < procChans; ++c) {
             const float* src = (c == 0) ? L : R;
             std::copy_n(src, numSamples, popBassTemp.getWritePointer(c));

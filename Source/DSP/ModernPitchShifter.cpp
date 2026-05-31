@@ -88,6 +88,51 @@ void ModernPitchShifter::prepare(double sampleRate, int samplesPerBlock)
     dryDelayWritePos = 0;
 }
 
+void ModernPitchShifter::reset()
+{
+    currentRatio = 1.0f;
+    smoothedRatio = 1.0f;
+    targetRatio = 1.0f;
+    appliedRatio = 1.0f;
+
+    if (stretcher != nullptr) {
+        stretcher->reset();
+        stretcher->setPitchScale(1.0);
+    }
+
+    outputFifo.reset();
+    outputBuffer.clear();
+
+    lookaheadBuffer.clear();
+    lookaheadOut.clear();
+    lookaheadWritePos = 0;
+
+    int delay = stretcher ? (int)stretcher->getStartDelay() : 0;
+    int slack = juce::jmax(16384, lookaheadOut.getNumSamples() * 16);
+    int prefill = delay + slack;
+
+    int start1, size1, start2, size2;
+    outputFifo.prepareToWrite(prefill, start1, size1, start2, size2);
+    if (size1 > 0) outputBuffer.clear(start1, size1);
+    if (size2 > 0) outputBuffer.clear(start2, size2);
+    outputFifo.finishedWrite(size1 + size2);
+
+    rubberOut.clear();
+    for (auto& s : lastOutSample) s = 0.0f;
+
+    for (int c = 0; c < numChans; ++c) {
+        dryHighpass[c].reset();
+        wetLowpass[c].reset();
+    }
+
+    onsetFadeTotal = 0;
+    onsetFadeRemaining = 0;
+    onsetFadeDelay = 0;
+
+    dryDelayBuffer.clear();
+    dryDelayWritePos = 0;
+}
+
 void ModernPitchShifter::setToneShaping(float sibilantsDb, float breathDb)
 {
     juce::ignoreUnused(sibilantsDb, breathDb);

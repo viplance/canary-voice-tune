@@ -60,21 +60,29 @@ double ClassicPitchShifter::findOptimalJump(double nominalPeriod) const
 
 void ClassicPitchShifter::prepare(double sampleRate, int samplesPerBlock)
 {
+    juce::ignoreUnused(samplesPerBlock);
     currentSampleRate = sampleRate;
     numChans = kMaxChans;
 
+    historyBuffer.setSize(numChans, kHistorySize, false, true, true);
+    corrHistoryBuffer.setSize(1, kCorrHistorySize, false, true, true);
+
+    reset();
+}
+
+void ClassicPitchShifter::reset()
+{
     currentRatio = 1.0f;
     smoothedRatio = 1.0f;
     targetRatio = 1.0f;
     alpha = 1.0f;
 
-    historyBuffer.setSize(numChans, kHistorySize, false, true, true);
     historyBuffer.clear();
     absoluteWritePos = 0;
 
-    corrHistoryBuffer.setSize(1, kCorrHistorySize, false, true, true);
     corrHistoryBuffer.clear();
     corrWritePos = 0;
+
     for (auto& addr : absoluteOutputAddr) {
         addr = 0.0;
     }

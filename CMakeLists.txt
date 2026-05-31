@@ -103,6 +103,12 @@ if (APPLE)
     )
 endif()
 
+if (MSVC)
+    target_compile_options(CanaryVoiceTune PRIVATE /W4)
+else()
+    target_compile_options(CanaryVoiceTune PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
+endif()
+
 # =============================================================================
 # Testing Target
 # =============================================================================
@@ -177,5 +183,11 @@ if (APPLE)
     set_target_properties(CanaryVoiceTune_Tests PROPERTIES
         OSX_ARCHITECTURES "arm64"
     )
+endif()
+
+if (MSVC)
+    target_compile_options(CanaryVoiceTune_Tests PRIVATE /W4)
+else()
+    target_compile_options(CanaryVoiceTune_Tests PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
 endif()
 
