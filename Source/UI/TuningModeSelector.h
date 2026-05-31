@@ -30,7 +30,6 @@ public:
     {
         auto bounds = getLocalBounds();
         float w = (float)bounds.getWidth();
-        float h = (float)bounds.getHeight();
         float cx = w * 0.5f;
 
         // Current slider value (0.0 = Modern, 1.0 = Classic)
@@ -86,7 +85,7 @@ public:
         g.fillEllipse(cx - dotRadius, thumbY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
 
         // 4. Draw label: "Classic" at the bottom to match the other knob values
-        g.setFont(juce::Font("Outfit", 12.0f, juce::Font::plain));
+        g.setFont(juce::Font(juce::FontOptions("Outfit", 12.0f, juce::Font::plain)));
 
         if (v >= 0.5) {
             g.setColour(juce::Colour::fromRGB(180, 120, 10)); // Active golden-bronze

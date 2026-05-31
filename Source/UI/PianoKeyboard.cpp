@@ -193,7 +193,8 @@ void PianoKeyboard::drawOctaveStrip(juce::Graphics& g)
     g.setColour(juce::Colour::fromRGB(205, 195, 178));
     g.drawLine(0.0f, (float)kLabelStripH, (float)getWidth(), (float)kLabelStripH, 1.0f);
 
-    g.setFont(juce::Font(juce::jlimit(11.0f, 15.0f, kLabelStripH * 0.78f), juce::Font::bold));
+    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(11.0f, 15.0f, kLabelStripH * 0.78f),
+                                           juce::Font::bold)));
 
     g.setColour(juce::Colour::fromRGB(120, 112, 98));
 
@@ -243,7 +244,7 @@ void PianoKeyboard::drawKeyLabel(juce::Graphics& g, juce::Rectangle<int> bounds,
     if (bounds.getWidth() < 11) return;
 
     float fontH = juce::jlimit(9.0f, 14.0f, bounds.getWidth() * 0.85f);
-    g.setFont(juce::Font(fontH, juce::Font::bold));
+    g.setFont(juce::Font(juce::FontOptions(fontH, juce::Font::bold)));
 
     juce::Colour textColor = blackKey
         ? (enabled ? juce::Colours::white.withAlpha(0.78f) : juce::Colours::white.withAlpha(0.40f))

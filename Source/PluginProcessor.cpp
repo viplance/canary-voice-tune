@@ -363,12 +363,12 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // closest enabled key with hysteresis applied.
 
   // ---- Compute the ratio --------------------------------------------------
-  // Target is always an active key (with `correctionStrength` controlling how
-  // far we pull the raw pitch toward it). `lockBypass` only fades in the dry
-  // signal during the lock-engage window.
-  // Note matching is always maximal (no Range control): the target is the
-  // chosen key exactly, plus the retained vibrato deviation.
-  float rawTargetMidi  = bestMidi + clampedDev;
+  // Target the note that survived the capture/stability state machine. Using
+  // raw bestMidi here bypasses the candidate hold above and makes the tuner
+  // chase one-block selector jitter ("quack") even though releaseMidi is still
+  // latched. The display follows the same held note so audio and UI agree.
+  int selectedMidi = (releaseMidi >= 0) ? releaseMidi : bestMidi;
+  float rawTargetMidi  = selectedMidi + clampedDev;
   rawTargetMidi        = rawTargetMidi * (1.0f - lockBypass)
                        + effectiveMidi * lockBypass;
 
@@ -387,7 +387,7 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // stale ratio and the singer's wobble survives to the output. Caller hands
   // us the raw per-block estimate as `detectedHz`.
   outRatio = juce::jlimit(0.5f, 2.0f, targetHz / detectedHz);
-  return bestMidi;
+  return selectedMidi;
 }
 
 void CanaryVoiceTuneAudioProcessor::pushNoteEvent(int noteIndex,

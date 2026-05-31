@@ -91,7 +91,8 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
                           1000.0f * (float)s.attackSamples / sr / std::max(attackMs, 1.0f)));
     float lockBypass = 1.0f - engageFade;
 
-    float rawTargetMidi = bestMidi + clampedDev;
+    int selectedMidi = (s.releaseMidi >= 0) ? s.releaseMidi : bestMidi;
+    float rawTargetMidi = selectedMidi + clampedDev;
     rawTargetMidi = rawTargetMidi * (1.0f - lockBypass) + effectiveMidi * lockBypass;
 
     float blockDtMs = 1000.0f * blockSize / sr;

@@ -58,6 +58,7 @@ private:
   float getPitchYin();
 
   float lastValidPitch = 0.0f;
+  float lastRawPitch = 0.0f;
   float instantPitch = 0.0f;
   float confidence = 0.0f;
   int holdCounter = 0;
@@ -108,5 +109,4 @@ private:
   std::vector<float> midScratch;
   std::vector<float> highScratch;
 };
-
 

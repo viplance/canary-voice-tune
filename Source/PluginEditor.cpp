@@ -202,7 +202,7 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
 
   // 6. Header Title Render (Frosted golden text)
   g.setColour(juce::Colour::fromRGB(95, 80, 65)); // Warm golden bronze
-  g.setFont(juce::Font("Outfit", 21.0f, juce::Font::bold));
+  g.setFont(juce::Font(juce::FontOptions("Outfit", 21.0f, juce::Font::bold)));
   g.drawFittedText(juce::String("Canary Voice Tune v") + PLUGIN_VERSION,
                    juce::Rectangle<int>(0, 0, getWidth(), 44),
                    juce::Justification::centred, 1);
@@ -210,7 +210,7 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
 
 
   // Labels sit right above each knob in soft golden-charcoal text
-  g.setFont(juce::Font("Outfit", 12.0f, juce::Font::plain));
+  g.setFont(juce::Font(juce::FontOptions("Outfit", 12.0f, juce::Font::plain)));
   g.setColour(juce::Colour::fromRGB(105, 90, 75)); // Warm gold-charcoal
 
   auto getLabelBounds = [](juce::Component &comp) {
@@ -317,4 +317,3 @@ void CanaryVoiceTuneAudioProcessorEditor::updateBreathLamp() {
   float a = (target > current) ? 0.6f : 0.15f;
   breathKnob.setLampIntensity(current + a * (target - current));
 }
-

@@ -37,6 +37,7 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   const float twoPi = 6.2831853f;
   hpfAlpha = std::exp(-twoPi * 2500.0f / (float)currentSampleRate);
   hpfState = 0.0f;
+  lastRawPitch = 0.0f;
 
   // Prepare 3-band crossover filters and scratch buffers
   juce::dsp::ProcessSpec spec;
@@ -201,6 +202,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
 
 
   if (rawPitch > 0.0f) {
+    lastRawPitch = rawPitch;
     silentBlockCount = 0;
 
     // Push the (possibly corrected) raw pitch through a 5-frame median
@@ -288,6 +290,9 @@ float PitchDetector::process(const float *audioData, int numSamples) {
       lastValidPitch = 0.0f;
       instantPitch = 0.0f;
       confidence = 0.0f;
+    }
+    if (lastValidPitch <= 0.0f) {
+      lastRawPitch = 0.0f;
     }
   }
 
@@ -457,6 +462,134 @@ float PitchDetector::getPitchYin() {
           break; // Snapped to the shortest valid divisor (highest pitch)
         }
       }
+    }
+  }
+
+  // 4d. Final candidate scoring with normalized autocorrelation and continuity.
+  //
+  // YIN's first-threshold rule is deliberately pitch-responsive, but singing
+  // vowels can contain a strong second formant or harmonic that makes a
+  // shorter-period dip look locally convincing. Before committing, compare a
+  // small family of period candidates (current tau, plausible multiples and
+  // divisors, plus the recent continuity anchors) using two independent
+  // measures:
+  //   * CMNDF depth from YIN (lower is better);
+  //   * normalized autocorrelation clarity at the same lag (higher is better).
+  // A continuity penalty lets the detector move to real new notes, but makes
+  // octave-family candidates beat the current note only when they are clearly
+  // better, which is exactly where formant-driven "quack" usually fails.
+  if (tauEstimate > 0) {
+    auto circularAt = [this](int pos) -> float {
+      int p = pos % yinBufferSize;
+      if (p < 0) p += yinBufferSize;
+      return circularBuffer[(size_t)p];
+    };
+
+    auto normalizedCorrAt = [&](int tau) -> float {
+      if (tau <= 0 || tau >= halfBufferSize) return -1.0f;
+      double xy = 0.0, xx = 0.0, yy = 0.0;
+      for (int i = 0; i < halfBufferSize; ++i) {
+        float x = circularAt(writeIndex - yinBufferSize + i);
+        float y = circularAt(writeIndex - yinBufferSize + i + tau);
+        xy += (double)x * (double)y;
+        xx += (double)x * (double)x;
+        yy += (double)y * (double)y;
+      }
+      if (xx <= 1e-12 || yy <= 1e-12) return -1.0f;
+      return (float)(xy / (std::sqrt(xx * yy) + 1e-12));
+    };
+
+    auto bestLocalTau = [&](int centerTau) -> int {
+      if (centerTau <= 1) return -1;
+      int radius = juce::jmax(2, (int)std::round((float)centerTau * 0.06f));
+      int lo = juce::jmax(2, centerTau - radius);
+      int hi = juce::jmin(halfBufferSize - 2, centerTau + radius);
+      int bestT = centerTau;
+      float bestV = yinBuffer[centerTau];
+      for (int t = lo; t <= hi; ++t) {
+        if (yinBuffer[t] < bestV) {
+          bestV = yinBuffer[t];
+          bestT = t;
+        }
+      }
+      return bestT;
+    };
+
+    auto continuityPenalty = [&](int tau) -> float {
+      float candidateHz = (float)currentSampleRate / (float)juce::jmax(1, tau);
+      float refHz = 0.0f;
+      if (slowAnchor > 0.0f)       refHz = slowAnchor;
+      else if (lastRawPitch > 0.0f) refHz = lastRawPitch;
+      else if (lastValidPitch > 0.0f) refHz = lastValidPitch;
+      if (refHz <= 0.0f) return 0.0f;
+
+      float semitones = 12.0f * std::abs(std::log2(candidateHz / refHz));
+      if (semitones <= 0.75f) return 0.0f;
+      if (semitones <= 5.0f)  return semitones * 0.015f;
+      if (semitones <= 8.0f)  return 0.08f + (semitones - 5.0f) * 0.035f;
+      return 0.20f + (semitones - 8.0f) * 0.065f;
+    };
+
+    bool hasContinuityRef = (slowAnchor > 0.0f || lastRawPitch > 0.0f || lastValidPitch > 0.0f);
+    float baseYin = yinBuffer[tauEstimate];
+    float baseCorr = normalizedCorrAt(tauEstimate);
+
+    struct Candidate {
+      int tau = -1;
+      float yin = 1.0f;
+      float corr = -1.0f;
+      float score = -1000.0f;
+    };
+
+    Candidate best;
+    auto consider = [&](int centerTau) {
+      int t = bestLocalTau(centerTau);
+      if (t <= 1 || t >= halfBufferSize - 1) return;
+
+      bool isLocalMin = (yinBuffer[t] <= yinBuffer[t - 1] &&
+                         yinBuffer[t] <= yinBuffer[t + 1]);
+      if (! isLocalMin) return;
+
+      float y = yinBuffer[t];
+      float c = normalizedCorrAt(t);
+      if (c < 0.08f || y > 0.55f) return;
+
+      // With no continuity reference (e.g. after consonants), trust YIN's
+      // first-threshold candidate unless a longer-period "fundamental" is
+      // decisively better. Otherwise a resonant vowel/formant can pull the
+      // detector to an octave-down subharmonic on note starts.
+      if (! hasContinuityRef && t > tauEstimate) {
+        bool clearlyBetter = (y < baseYin * 0.70f) && (c >= baseCorr - 0.02f);
+        if (! clearlyBetter) return;
+      }
+
+      // Prefer a lower fundamental only when continuity exists; without that
+      // reference the first-threshold YIN candidate is the safer default.
+      float longerTauBias = (t > tauEstimate)
+          ? (hasContinuityRef ? juce::jlimit(0.0f, 0.04f, 0.014f * std::log2((float)t / (float)tauEstimate)) : 0.0f)
+          : 0.0f;
+      float shorterTauPenalty = (t < tauEstimate)
+          ? juce::jlimit(0.0f, 0.08f, 0.025f * std::log2((float)tauEstimate / (float)t))
+          : 0.0f;
+
+      Candidate cand;
+      cand.tau = t;
+      cand.yin = y;
+      cand.corr = c;
+      cand.score = (1.0f - y) + 0.45f * c + longerTauBias
+                 - shorterTauPenalty - continuityPenalty(t);
+
+      if (cand.score > best.score) best = cand;
+    };
+
+    consider(tauEstimate);
+    for (int mult = 2; mult <= 4; ++mult) consider(tauEstimate * mult);
+    for (int div = 2; div <= 4; ++div) consider(tauEstimate / div);
+    if (lastRawPitch > 0.0f)  consider((int)std::round(currentSampleRate / lastRawPitch));
+    if (slowAnchor > 0.0f)    consider((int)std::round(currentSampleRate / slowAnchor));
+
+    if (best.tau > 0) {
+      tauEstimate = best.tau;
     }
   }
 
