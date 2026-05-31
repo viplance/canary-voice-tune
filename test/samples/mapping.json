@@ -1,0 +1,242 @@
+{
+  "tests": [
+    {
+      "id": "breath_gate_with_breath",
+      "description": "Breath gate attenuates a breath signal by ~-6 dB",
+      "cpp_renderer": "BreathGate",
+      "settings": {
+        "engine": "modern",
+        "attack_ms": 100,
+        "release_ms": 250,
+        "vibrato": 1.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": -48,
+        "pop_filter_db": 0
+      },
+      "source": "breath.wav",
+      "result": "breath_gate_breath_out.wav",
+      "checks": [
+        {
+          "type": "rms_attenuation_vs_reference",
+          "reference_result": "breath_gate_no_breath_out.wav",
+          "min_db": -9.0,
+          "max_db": -2.0,
+          "description": "Output RMS should be 2–9 dB lower than the no-breath reference"
+        }
+      ]
+    },
+    {
+      "id": "breath_gate_no_breath",
+      "description": "Breath gate leaves a clean vocal signal unchanged",
+      "cpp_renderer": "BreathGate",
+      "settings": {
+        "engine": "modern",
+        "attack_ms": 100,
+        "release_ms": 250,
+        "vibrato": 1.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": -48,
+        "pop_filter_db": 0
+      },
+      "source": "no_breath.wav",
+      "result": "breath_gate_no_breath_out.wav",
+      "checks": [
+        {
+          "type": "rms_attenuation_vs_source",
+          "min_db": -3.0,
+          "max_db": 3.0,
+          "description": "Output RMS should be within ±3 dB of input (gate should not fire)"
+        }
+      ]
+    },
+    {
+      "id": "exciter_off",
+      "description": "Baseline render with exciter disabled",
+      "cpp_renderer": "Exciter",
+      "settings": {
+        "engine": "modern",
+        "attack_ms": 100,
+        "release_ms": 250,
+        "vibrato": 1.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": 0,
+        "pop_filter_db": 0
+      },
+      "source": "no_breath.wav",
+      "result": "exciter_off_out.wav",
+      "checks": []
+    },
+    {
+      "id": "exciter_on",
+      "description": "Exciter at +12 dB should add measurable HF harmonic energy vs exciter_off",
+      "cpp_renderer": "Exciter",
+      "settings": {
+        "engine": "modern",
+        "attack_ms": 100,
+        "release_ms": 250,
+        "vibrato": 1.0,
+        "exciter_db": 12,
+        "sibilants_db": 0,
+        "breath_gate_db": 0,
+        "pop_filter_db": 0
+      },
+      "source": "no_breath.wav",
+      "result": "exciter_on_out.wav",
+      "checks": [
+        {
+          "type": "hf_rms_ratio_vs_reference",
+          "reference_result": "exciter_off_out.wav",
+          "hf_cutoff_hz": 4000,
+          "min_ratio": 1.03,
+          "description": "HF energy (>4 kHz) should be at least 3% higher than exciter-off baseline"
+        }
+      ]
+    },
+    {
+      "id": "classic_click",
+      "description": "Classic mode with Attack 0 / Release 0 must not introduce clicks at note onsets",
+      "cpp_renderer": "ClassicClick",
+      "settings": {
+        "engine": "classic",
+        "attack_ms": 0,
+        "release_ms": 0,
+        "vibrato": 0.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": 0,
+        "pop_filter_db": 0
+      },
+      "source": "dynamic_solo.wav",
+      "result": "classic_click_out.wav",
+      "checks": [
+        {
+          "type": "no_clicks",
+          "window_short_ms": 1,
+          "window_long_ms": 10,
+          "rms_ratio_threshold": 8.0,
+          "active_floor": 0.02,
+          "description": "No RMS burst exceeding 8× surrounding envelope in active regions"
+        }
+      ]
+    },
+    {
+      "id": "octave_jump",
+      "description": "Classic mode must not jump octaves on jump_notes.wav — D3 region stays near MIDI 50",
+      "cpp_renderer": "OctaveJump",
+      "settings": {
+        "engine": "classic",
+        "attack_ms": 0,
+        "release_ms": 0,
+        "vibrato": 0.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": 0,
+        "pop_filter_db": 0
+      },
+      "source": "jump_notes.wav",
+      "result": "jump_notes_out.wav",
+      "checks": [
+        {
+          "type": "pitch_in_range",
+          "region_sec": [0.1, 1.8],
+          "target_midi": 50,
+          "tolerance_st": 3.5,
+          "description": "D3 (MIDI 50) region — no octave-up jump to D4 (MIDI 62)"
+        }
+      ]
+    },
+    {
+      "id": "long_melody_classic",
+      "description": "Classic engine tunes all 19 notes of long_melody.wav to within ±0.6 st",
+      "cpp_renderer": "LongMelody",
+      "settings": {
+        "engine": "classic",
+        "attack_ms": 0,
+        "release_ms": 10,
+        "vibrato": 0.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": 0,
+        "pop_filter_db": 0,
+        "all_keys_active": true
+      },
+      "source": "long_melody.wav",
+      "result": "long_melody_classic.wav",
+      "checks": [
+        {
+          "type": "pitch_segments",
+          "tolerance_st": 0.6,
+          "segments": [
+            {"start": 0.15, "end": 1.30, "midi": 59, "name": "B3  ( 1)"},
+            {"start": 1.34, "end": 1.46, "midi": 61, "name": "C#4 ( 2)"},
+            {"start": 1.47, "end": 1.79, "midi": 63, "name": "D#4 ( 3)"},
+            {"start": 1.86, "end": 2.35, "midi": 61, "name": "C#4 ( 4)"},
+            {"start": 2.58, "end": 2.76, "midi": 61, "name": "C#4 ( 5)"},
+            {"start": 2.84, "end": 3.24, "midi": 59, "name": "B3  ( 6)"},
+            {"start": 3.24, "end": 3.62, "midi": 58, "name": "A#3 ( 7)"},
+            {"start": 3.80, "end": 4.40, "midi": 59, "name": "B3  ( 8)"},
+            {"start": 4.92, "end": 5.15, "midi": 61, "name": "C#4 ( 9)"},
+            {"start": 5.27, "end": 5.52, "midi": 63, "name": "D#4 (10)"},
+            {"start": 5.72, "end": 6.05, "midi": 61, "name": "C#4 (11)"},
+            {"start": 6.24, "end": 6.43, "midi": 63, "name": "D#4 (12)"},
+            {"start": 6.93, "end": 7.15, "midi": 59, "name": "B3  (13)"},
+            {"start": 7.15, "end": 7.33, "midi": 58, "name": "A#3 (14)"},
+            {"start": 7.40, "end": 7.62, "midi": 59, "name": "B3  (15)"},
+            {"start": 8.76, "end": 9.00, "midi": 61, "name": "C#4 (16)"},
+            {"start": 9.14, "end": 9.26, "midi": 63, "name": "D#4 (17)"},
+            {"start": 9.50, "end": 9.93, "midi": 61, "name": "C#4 (18)"},
+            {"start": 10.00, "end": 10.50, "midi": 61, "name": "C#4 (19)"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "long_melody_modern",
+      "description": "Modern engine tunes all 19 notes of long_melody.wav to within ±0.6 st",
+      "cpp_renderer": "LongMelody",
+      "settings": {
+        "engine": "modern",
+        "attack_ms": 0,
+        "release_ms": 10,
+        "vibrato": 0.0,
+        "exciter_db": 0,
+        "sibilants_db": 0,
+        "breath_gate_db": 0,
+        "pop_filter_db": 0,
+        "all_keys_active": true
+      },
+      "source": "long_melody.wav",
+      "result": "long_melody_modern.wav",
+      "checks": [
+        {
+          "type": "pitch_segments",
+          "tolerance_st": 0.6,
+          "segments": [
+            {"start": 0.15, "end": 1.30, "midi": 59, "name": "B3  ( 1)"},
+            {"start": 1.34, "end": 1.46, "midi": 61, "name": "C#4 ( 2)"},
+            {"start": 1.47, "end": 1.79, "midi": 63, "name": "D#4 ( 3)"},
+            {"start": 1.86, "end": 2.35, "midi": 61, "name": "C#4 ( 4)"},
+            {"start": 2.58, "end": 2.76, "midi": 61, "name": "C#4 ( 5)"},
+            {"start": 2.84, "end": 3.24, "midi": 59, "name": "B3  ( 6)"},
+            {"start": 3.24, "end": 3.62, "midi": 58, "name": "A#3 ( 7)"},
+            {"start": 3.80, "end": 4.40, "midi": 59, "name": "B3  ( 8)"},
+            {"start": 4.92, "end": 5.15, "midi": 61, "name": "C#4 ( 9)"},
+            {"start": 5.27, "end": 5.52, "midi": 63, "name": "D#4 (10)"},
+            {"start": 5.72, "end": 6.05, "midi": 61, "name": "C#4 (11)"},
+            {"start": 6.24, "end": 6.43, "midi": 63, "name": "D#4 (12)"},
+            {"start": 6.93, "end": 7.15, "midi": 59, "name": "B3  (13)"},
+            {"start": 7.15, "end": 7.33, "midi": 58, "name": "A#3 (14)"},
+            {"start": 7.40, "end": 7.62, "midi": 59, "name": "B3  (15)"},
+            {"start": 8.76, "end": 9.00, "midi": 61, "name": "C#4 (16)"},
+            {"start": 9.14, "end": 9.26, "midi": 63, "name": "D#4 (17)"},
+            {"start": 9.50, "end": 9.93, "midi": 61, "name": "C#4 (18)"},
+            {"start": 10.00, "end": 10.50, "midi": 61, "name": "C#4 (19)"}
+          ]
+        }
+      ]
+    }
+  ]
+}

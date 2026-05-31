@@ -12,7 +12,14 @@
       "Bash(awk '{hz=$1+0; if\\(hz>400\\) print \"OCTAVE_UP: \"hz\" Hz\"}')",
       "Bash(awk '{hz=$1+0; if\\(hz>400\\) count++} END {print \"Octave-up jumps: \"count}')",
       "Bash(python3 -c ' *)",
-      "Bash(pip3 install *)"
+      "Bash(pip3 install *)",
+      "Bash(sed -i '' 's/int detectedCount = 0;//' test/Test_BreathGate.cpp)",
+      "Bash(sed -i '' 's/bool detectedBreath = false;//' test/Test_BreathGate.cpp)",
+      "Bash(sed -i '' 's/        detectedBreath = true;//' test/Test_BreathGate.cpp)",
+      "Bash(sed -i '' 's/            detectedCount++;//' test/Test_BreathGate.cpp)",
+      "Bash(python3 test/check_results.py)",
+      "Bash(python3 test/python/run_all.py)",
+      "Bash(python3 test/python/run_all.py breath exciter click)"
     ]
   }
 }

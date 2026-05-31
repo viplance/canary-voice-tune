@@ -1,6 +1,6 @@
 #include "Test_HighlightOctave.h"
 #include "TestHelpers.h"
-#include "../Source/DSP/PitchDetector.h"
+#include "../../Source/DSP/PitchDetector.h"
 #include <iostream>
 #include <cmath>
 

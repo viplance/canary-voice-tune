@@ -8,7 +8,7 @@
     "clean": "rm -rf build",
     "clean:all": "rm -rf build vendor",
     "clean:reaper": "rm ~/Library/Application Support/REAPER/reaper-vstplugins_arm64.ini",
-    "test": "./build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/samples/breath.wav test/samples/no_breath.wav"
+    "test": "./build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests && python3 test/python/run_all.py"
   },
   "author": "Dzmitry Sharko",
   "license": "ISC"

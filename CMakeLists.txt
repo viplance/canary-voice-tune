@@ -117,27 +117,27 @@ juce_add_console_app(CanaryVoiceTune_Tests
 )
 
 target_sources(CanaryVoiceTune_Tests PRIVATE
-    test/TestRunner.cpp
-    test/TestHelpers.h
-    test/TestHelpers.cpp
-    test/Test_BreathGate.h
-    test/Test_BreathGate.cpp
-    test/Test_Exciter.h
-    test/Test_Exciter.cpp
-    test/Test_NoteMapping.h
-    test/Test_NoteMapping.cpp
-    test/Test_ClassicClick.h
-    test/Test_ClassicClick.cpp
-    test/Test_OctaveJump.h
-    test/Test_OctaveJump.cpp
-    test/Test_HighlightOctave.h
-    test/Test_HighlightOctave.cpp
-    test/Test_NoteSelector.h
-    test/Test_NoteSelector.cpp
-    test/Test_LongMelody.h
-    test/Test_LongMelody.cpp
-    test/Test_19Notes.h
-    test/Test_19Notes.cpp
+    test/cpp/TestRunner.cpp
+    test/cpp/TestHelpers.h
+    test/cpp/TestHelpers.cpp
+    test/cpp/Test_BreathGate.h
+    test/cpp/Test_BreathGate.cpp
+    test/cpp/Test_Exciter.h
+    test/cpp/Test_Exciter.cpp
+    test/cpp/Test_NoteMapping.h
+    test/cpp/Test_NoteMapping.cpp
+    test/cpp/Test_ClassicClick.h
+    test/cpp/Test_ClassicClick.cpp
+    test/cpp/Test_OctaveJump.h
+    test/cpp/Test_OctaveJump.cpp
+    test/cpp/Test_HighlightOctave.h
+    test/cpp/Test_HighlightOctave.cpp
+    test/cpp/Test_NoteSelector.h
+    test/cpp/Test_NoteSelector.cpp
+    test/cpp/Test_LongMelody.h
+    test/cpp/Test_LongMelody.cpp
+    test/cpp/Test_19Notes.h
+    test/cpp/Test_19Notes.cpp
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
     Source/DSP/NoteSelector.cpp

@@ -1,5 +1,5 @@
 #include "Test_NoteSelector.h"
-#include "../Source/DSP/NoteSelector.h"
+#include "../../Source/DSP/NoteSelector.h"
 #include <iostream>
 #include <cmath>
 #include <cstdlib>

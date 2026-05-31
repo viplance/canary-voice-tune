@@ -1,6 +1,6 @@
 #include "Test_19Notes.h"
 #include "TestHelpers.h"
-#include "../Source/DSP/PitchDetector.h"
+#include "../../Source/DSP/PitchDetector.h"
 #include <iostream>
 #include <cmath>
 #include <vector>
