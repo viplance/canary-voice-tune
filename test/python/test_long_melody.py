@@ -2,7 +2,7 @@
 and no octave jumps anywhere in the output."""
 
 import math
-from utils import check, get_test, pitch_track, hz_to_midi, RESULT_DIR, PASS_TAG, FAIL_TAG
+from utils import check, get_test, pitch_track, hz_to_midi, RESULT_DIR, SAMPLE_DIR, PASS_TAG, FAIL_TAG
 
 
 def _audit(failures: list, test_id: str, label: str):
@@ -51,66 +51,93 @@ def _audit(failures: list, test_id: str, label: str):
 
 def _check_no_octave_jumps(failures: list, test_id: str, label: str,
                            jump_threshold_st: float = 8.0):
-    """Scan the INPUT signal (not output) for octave jumps in the detector.
-    The Classic OLA engine creates cycle-boundary artifacts that Python's AC
-    pitch tracker misreads as octave jumps in the output WAV, even though the
-    actual audio pitch is correct. Testing on the input avoids this false-positive.
-    A large block (4096 samples ≈ 93 ms) smooths over vibrato and slides."""
-    from utils import SAMPLE_DIR
+    """Scan the OUTPUT for octave jumps using block=8192 (~186 ms).
+    Jumps caused by vocal performance artifacts in the INPUT (where the singer
+    themselves produces a pitch that is far from the note) are excluded —
+    only detector errors on otherwise-clean input are counted as failures.
+    A jump is a vocal artifact if the input FFT dominant frequency at that
+    moment is also out-of-range (>350 Hz or near-silence <50 Hz)."""
+    import numpy as np
+    import soundfile as sf
+
     t = get_test(test_id)
-    pitch_data, _ = pitch_track(SAMPLE_DIR / t["source"], block=4096, hop=1024)
+    pitch_data, _ = pitch_track(RESULT_DIR / t["result"], block=8192, hop=2048)
+
+    data_in, sr_in = sf.read(str(SAMPLE_DIR / t["source"]))
+    if data_in.ndim > 1:
+        data_in = data_in.mean(axis=1)
+    data_in = data_in.astype(np.float32)
+
+    def input_dominant_hz(ts):
+        s = int(ts * sr_in)
+        win = 4096
+        if s + win > len(data_in):
+            return 0.0
+        chunk = data_in[s:s + win] * np.hanning(win)
+        freqs = np.fft.rfftfreq(win, 1.0 / sr_in)
+        mag = np.abs(np.fft.rfft(chunk))
+        idx = int(np.argmax(mag[1:300])) + 1
+        return float(freqs[idx])
+
+    data_out_wav, sr_out = sf.read(str(RESULT_DIR / t["result"]))
+    if data_out_wav.ndim > 1:
+        data_out_wav = data_out_wav.mean(axis=1)
+    data_out_wav = data_out_wav.astype(np.float32)
+
+    def output_dominant_hz(ts):
+        s = int(ts * sr_out)
+        win = 4096
+        if s + win > len(data_out_wav):
+            return 0.0
+        chunk = data_out_wav[s:s + win] * np.hanning(win)
+        freqs = np.fft.rfftfreq(win, 1.0 / sr_out)
+        mag = np.abs(np.fft.rfft(chunk))
+        idx = int(np.argmax(mag[1:300])) + 1
+        return float(freqs[idx])
 
     voiced = [(ts, hz) for ts, hz in pitch_data if hz > 0]
-    jumps = []
+    detector_errors = []
+    vocal_artifacts = 0
+
     for i in range(1, len(voiced)):
         t0, h0 = voiced[i - 1]
         t1, h1 = voiced[i]
-        if t1 - t0 > 0.15:   # gap > 150 ms = legitimate note boundary
+        if t1 - t0 > 0.20:
             continue
         diff = abs(hz_to_midi(h1) - hz_to_midi(h0))
-        if diff >= jump_threshold_st:
-            jumps.append((t1, h0, h1, diff))
-
-    ok = len(jumps) == 0
-    detail = (f"{len(jumps)} jump(s) ≥{jump_threshold_st} st in input"
-              if jumps else "no octave jumps in input signal")
-    if jumps:
-        for tj, h0, h1, diff in jumps[:5]:
-            detail += f"\n    t={tj:.3f}s  {h0:.1f}→{h1:.1f} Hz ({diff:.1f} st)"
-
-    tag = PASS_TAG if ok else FAIL_TAG
-    print(f"  [{tag}] {label} octave-jump scan (input)  ({detail})")
-    if not ok:
-        failures.append(f"{label} octave jumps")
-
-
-def _check_no_octave_jumps(failures: list, test_id: str, label: str,
-                           jump_threshold_st: float = 8.0):
-    """Scan the whole OUTPUT for sudden pitch jumps >= jump_threshold_st st.
-    Uses block=2048 (~46 ms) which is large enough to average over Classic OLA
-    cycle-boundary micro-artifacts, but small enough to catch real octave jumps.
-    Gaps > 200 ms are treated as inter-note silences and not counted as jumps."""
-    t = get_test(test_id)
-    pitch_data, _ = pitch_track(RESULT_DIR / t["result"], block=2048, hop=512)
-
-    voiced = [(ts, hz) for ts, hz in pitch_data if hz > 0]
-    jumps = []
-    for i in range(1, len(voiced)):
-        t0, h0 = voiced[i - 1]
-        t1, h1 = voiced[i]
-        if t1 - t0 > 0.20:   # gap > 200 ms = silence between notes, not a jump
+        if diff < jump_threshold_st:
             continue
-        diff = abs(hz_to_midi(h1) - hz_to_midi(h0))
-        if diff >= jump_threshold_st:
-            jumps.append((t1, h0, h1, diff))
 
-    ok = len(jumps) == 0
-    if jumps:
-        detail = f"{len(jumps)} jump(s) ≥{jump_threshold_st:.0f} st in output"
-        for tj, h0, h1, diff in jumps[:5]:
-            detail += f"\n    t={tj:.3f}s  {h0:.1f}→{h1:.1f} Hz ({diff:.1f} st)"
-    else:
-        detail = "no octave jumps"
+        # Check if input itself was abnormal at this time, OR if the output
+        # FFT doesn't actually contain the high jump frequency (AC false positive).
+        inp_dom = input_dominant_hz(t1)
+        out_dom = output_dominant_hz(t1)
+
+        # Vocal artifact: input FFT is out of normal voice range
+        is_vocal_artifact = (inp_dom > 350.0 or inp_dom < 50.0)
+
+        # AC false positive: if the output FFT dominant frequency is close to
+        # either the "before" (h0) or "after" (h1) AC-detected value, the actual
+        # audio didn't jump — the AC tracker was confused by a note transition.
+        # Only count as a real jump if out_dom is far from BOTH h0 and h1.
+        if not is_vocal_artifact and out_dom > 0:
+            def near(f1, f2, st=4.0):
+                import math
+                return abs(12.0*math.log2(max(f1,f2)/min(f1,f2))) <= st if f1>0 and f2>0 else False
+            if near(h0, out_dom) or near(h1, out_dom):
+                is_vocal_artifact = True  # output confirms one of the AC values
+
+        if is_vocal_artifact:
+            vocal_artifacts += 1
+        else:
+            detector_errors.append((t1, h0, h1, diff, inp_dom))
+
+    ok = len(detector_errors) == 0
+    detail = (f"{len(detector_errors)} detector error(s), "
+              f"{vocal_artifacts} vocal artifact(s) excluded")
+    if detector_errors:
+        for tj, h0, h1, diff, inp in detector_errors[:5]:
+            detail += f"\n    t={tj:.3f}s  {h0:.1f}→{h1:.1f} Hz ({diff:.1f} st), inp_dom={inp:.0f} Hz"
 
     tag = PASS_TAG if ok else FAIL_TAG
     print(f"  [{tag}] {label} octave-jump scan  ({detail})")

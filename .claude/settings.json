@@ -30,7 +30,13 @@
       "Bash(python3 test/python/run_all.py breath exciter click octave)",
       "Bash(build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/samples/jump_notes.wav)",
       "Bash(python3 test/python/run_all.py octave)",
-      "Bash(cmake --build build --target CanaryVoiceTune_Tests CanaryVoiceTune_VST3 -- -j4)"
+      "Bash(cmake --build build --target CanaryVoiceTune_Tests CanaryVoiceTune_VST3 -- -j4)",
+      "WebFetch(domain:muted.io)",
+      "Bash(curl -s \"https://muted.io/voice-tuner/\")",
+      "Bash(curl -s \"https://muted.io/js/main.min.js\")",
+      "Bash(curl -s \"https://muted.io/js/pitchy.min.js\")",
+      "Bash(python3 test/python/benchmark_detectors.py)",
+      "Bash(awk 'NR>=470 && NR<=490 {print NR\": \"$0}')"
     ]
   }
 }

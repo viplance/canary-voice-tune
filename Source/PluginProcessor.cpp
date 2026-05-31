@@ -534,6 +534,20 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   for (int i = 0; i < (int)monoMix.size(); ++i) blockSumSq += monoMix[i] * monoMix[i];
   float blockRms = (monoMix.size() > 0) ? std::sqrt(blockSumSq / (float)monoMix.size()) : 0.0f;
 
+  // Octave-jump guard in the selector layer: if detectedHz jumps more than
+  // one octave from the previous valid pitch, the detector made an error —
+  // clamp to the previous value so the shifter doesn't apply a wild ratio.
+  // Legitimate large melodic intervals (up to a 7th ≈ 10 st) are preserved;
+  // only octave-class errors (≥ 11 st from prior) are suppressed.
+  if (detectedHz > 0.0f && smoothedHz > 0.0f) {
+    float prevHz = smoothedHz;
+    if (prevHz > 0.0f) {
+      float semitones = 12.0f * std::abs(std::log2(detectedHz / prevHz));
+      if (semitones >= 11.0f)
+        detectedHz = prevHz;   // ignore the jump — hold previous estimate
+    }
+  }
+
   bool  isVoiced    = (detectedHz > 0.0f) && !isConsonant && (blockRms > 0.01f);
 
 

@@ -145,10 +145,21 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
         for (int i = 0; i < block_size; ++i) sumSq += blockData[i] * blockData[i];
         float rms = std::sqrt(sumSq / block_size);
 
-        detector.process(blockData, block_size);
+        // smoothedHz = lastValidPitch (held across short silences via hold frames)
+        float smoothedHz  = detector.process(blockData, block_size);
         bool  isConsonant = detector.isConsonant();
         float pitchHz     = detector.getInstantPitch();
-        bool  isVoiced    = (pitchHz > 50.0f) && !isConsonant && rms > 0.01f;
+        if (pitchHz <= 0.0f) pitchHz = smoothedHz;
+
+        // Octave-jump guard: mirrors PluginProcessor.
+        // smoothedHz (lastValidPitch) survives short silences via hold frames,
+        // so we compare against it rather than a manually-reset variable.
+        if (pitchHz > 0.0f && smoothedHz > 0.0f) {
+            float st = 12.0f * std::abs(std::log2(pitchHz / smoothedHz));
+            if (st >= 11.0f) pitchHz = smoothedHz;
+        }
+
+        bool  isVoiced = (pitchHz > 50.0f) && !isConsonant && rms > 0.01f;
 
         juce::AudioBuffer<float> blockBuf(2, block_size);
         for (int c = 0; c < 2; ++c) blockBuf.copyFrom(c, 0, blockData, block_size);

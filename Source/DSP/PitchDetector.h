@@ -1,8 +1,8 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
 #include <vector>
-#include <deque>
 
 class PitchDetector {
 public:
@@ -10,108 +10,93 @@ public:
   ~PitchDetector();
 
   void prepare(double sampleRate, int samplesPerBlock);
+  float process(const float* audioData, int numSamples);
 
-  // Returns detected pitch in Hz, or 0 if unvoiced/undetected
-  float process(const float *audioData, int numSamples);
-
-  // Confidence of the last detection (0.0 = none, 1.0 = very sure)
-  float getConfidence() const { return confidence; }
-
-  // Per-block unsmoothed estimate (post median filter, pre `lastValidPitch`
-  // exponential averaging). 0 if the current block was unvoiced. Useful when
-  // a downstream stage needs to cancel the live pitch wobble — the smoothed
-  // pitch returned by process() lags it by 3-4 blocks and produces stale
-  // cancellation ratios.
-  float getInstantPitch() const { return instantPitch; }
-
-  // True when the current block looks like a consonant (fricative,
-  // plosive transient, sibilant) or other non-tonal sound rather than a
-  // sustained vowel. Downstream stages use this to wipe their lock state
-  // so the next vowel starts fresh and the consonant isn't "tuned".
-  // Detection combines three cheap features:
-  //   1. Zero-crossing rate (high for fricatives/sibilants).
-  //   2. High-band-to-low-band energy ratio (high for unvoiced consonants).
-  //   3. YIN tau-minimum depth (shallow when no clear periodicity).
-  bool isConsonant() const { return consonantFlag; }
-  bool isBreath() const { return breathFlag; }
-  float getZcr() const { return lastZcr; }
-  float getHfRatio() const { return lastHfRatio; }
-  float getYinMinValue() const { return lastYinMinValue; }
-
+  float getInstantPitch()  const { return instantPitch; }
+  float getConfidence()    const { return confidence; }
+  bool  isConsonant()      const { return consonantFlag; }
+  bool  isBreath()         const { return breathFlag; }
+  float getZcr()           const { return lastZcr; }
+  float getHfRatio()       const { return lastHfRatio; }
+  float getYinMinValue()   const { return lastClarity; }
 
 private:
   double currentSampleRate = 44100.0;
 
-  // 2048 samples ≈ 46 ms at 44.1 kHz. This lets YIN search for periods up
-  // to 23 ms, i.e. fundamentals down to ~43 Hz, with enough overlap at long
-  // periods that the difference function is well-conditioned (the main
-  // remedy for YIN's classic octave-up errors on low male voices).
-  static constexpr int yinBufferSize = 2048;
+  // ---- AMDF (Average Magnitude Difference Function) -----------------------
+  // d(tau) = (1/N) * sum_{i=0}^{N-1} |x[i] - x[i+tau]|
+  //
+  // Minimum of d(tau) at tau = period of the signal.
+  // More octave-stable than YIN because magnitude (not squared) differences
+  // are less sensitive to energy bursts, and no cumulative normalisation is
+  // needed — the raw minimum is already at the fundamental period.
+  //
+  // We run AMDF on a low-pass filtered copy of the signal (kLpfCutoff) to
+  // suppress high-frequency formants that inflate |x[i]-x[i+tau]| at short
+  // lags and can pull the minimum to a harmonic period.
+
+  static constexpr int   kWindowSize  = 2048;   // analysis window (~46 ms)
+  static constexpr float kLpfCutoff   = 600.0f;
+  static constexpr float kFmin        =  60.0f;
+  static constexpr float kFmax        = 900.0f;
+  static constexpr float kRmsGate     = 0.01f;
+  // Clarity threshold: normalised AMDF minimum / mean.
+  // Values < kClarityThresh are confidently periodic (voiced).
+  static constexpr float kClarityThresh = 0.55f;
+
+  // Circular buffer for LPF-filtered signal
   std::vector<float> circularBuffer;
-  std::vector<float> yinBuffer;
   int writeIndex = 0;
 
-  // 0.10 is the canonical YIN absolute threshold from the de Cheveigné &
-  // Kawahara paper; 0.20 (the previous value here) is permissive and lets
-  // weak harmonic minima win, which produces octave jumps.
-  float yinTolerance = 0.15f;
-  float getPitchYin();
+  // 2-stage LPF (≈ 4th order) applied sample-by-sample via IIR biquad
+  juce::dsp::IIR::Filter<float> lpf1, lpf2;
 
-  float lastValidPitch = 0.0f;
-  float lastRawPitch = 0.0f;
-  float instantPitch = 0.0f;
-  float confidence = 0.0f;
-  int holdCounter = 0;
-  static constexpr int holdFrames = 8;
+  float getPitchAMDF();
 
-  // Per-block consonant classifier (computed inside process()).
-  bool  consonantFlag = false;
-  // Simple 1st-order high-pass state for the high-band energy split.
-  // Cutoff is set in prepare() to ~2.5 kHz.
-  float hpfState = 0.0f;
-  float hpfAlpha = 0.0f;
-  // Lowest YIN tau-value seen in the current block (after the cumulative
-  // mean normalisation). Used as a "voiced-ness" proxy: deep minima are
-  // characteristic of a vowel, shallow ones of an unvoiced consonant.
-  float lastYinMinValue = 1.0f;
-  float lastZcr = 0.0f;
-  float lastHfRatio = 0.0f;
-
-  // Short median filter on recent raw pitches, to suppress single-frame
-  // octave jumps (one aberrant detection in three is rejected).
+  // ---- Smoothing ----------------------------------------------------------
   static constexpr int kMedianHistory = 5;
-  float medianHistory[kMedianHistory] = {0,0,0,0,0};
-  int   medianIndex = 0;
+  float medianHistory[kMedianHistory] = {};
+  int   medianIndex  = 0;
   int   medianFilled = 0;
-  // Number of consecutive silent (rawPitch==0) blocks since last voiced block.
-  // Used to flush the median ring early so a new-note onset doesn't inherit
-  // pitches from a previous phrase separated by silence.
-  int   silentBlockCount = 0;
-  // Flush median + anchor only after a genuine inter-phrase silence (≥8 blocks
-  // ≈ 46 ms at 44.1 kHz / 256). Short consonant gaps (1–3 blocks) must NOT
-  // flush the anchor — the anchor is the only protection against onset octave
-  // jumps, and resetting it on every consonant leaves the first vowel block
-  // unguarded.
-  static constexpr int kMedianFlushBlocks = 8;
-
-  // Slow-moving pitch anchor: EMA that only updates when the current estimate
-  // is within ±6 semitones of itself.  Used by the octave-continuity guard to
-  // reject transient high-pitch phonemes (voice break, consonant onset) that
-  // make the regular lastValidPitch race upward before the guard can act.
-  float slowAnchor = 0.0f;
-
   float medianOf(float a, float b, float c, float d, float e) const;
 
-  bool  breathFlag = false;
-  int   breathBlockCounter = 0;
+  int   silentBlockCount = 0;
+  static constexpr int kMedianFlushBlocks = 8;
 
-  juce::dsp::IIR::Filter<float> lowFilter;
+  // After silence/consonant the circular buffer needs kWindowSize/block_size
+  // blocks to fill with fresh audio before AMDF is reliable. Track how many
+  // voiced blocks have elapsed since the last silent/consonant block.
+  int   voicedBlocksSinceOnset_ = 0;
+  static constexpr int kOnsetGuardBlocks = 8;
+
+  // Octave fold anchor
+  float slowAnchor = 0.0f;
+  float foldToAnchor(float hz) const;
+
+  // Last pitch from a voiced segment — survives silence/consonants so that
+  // when a new note starts we can seed the anchor in the correct octave.
+  float lastKnownGoodPitch_ = 0.0f;
+
+  // ---- Output state -------------------------------------------------------
+  float lastValidPitch = 0.0f;
+  float lastRawPitch   = 0.0f;
+  float instantPitch   = 0.0f;
+  float confidence     = 0.0f;
+  int   holdCounter    = 0;
+  static constexpr int holdFrames = 8;
+
+  // ---- Consonant / breath -------------------------------------------------
+  bool  consonantFlag    = false;
+  float lastClarity      = 1.0f;
+  float lastZcr          = 0.0f;
+  float lastHfRatio      = 0.0f;
+  float hpfState         = 0.0f;
+  float hpfAlpha         = 0.0f;
+
+  bool  breathFlag           = false;
+  int   breathBlockCounter   = 0;
+
+  // Single mid-band HPF for breath detection (replaces 3-band crossover).
   juce::dsp::IIR::Filter<float> midHpFilter;
-  juce::dsp::IIR::Filter<float> midLpFilter;
-  juce::dsp::IIR::Filter<float> highFilter;
-
-  std::vector<float> lowScratch;
   std::vector<float> midScratch;
-  std::vector<float> highScratch;
 };
-
