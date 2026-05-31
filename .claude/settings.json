@@ -29,7 +29,8 @@
       "Bash(build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/samples/long_melody.wav)",
       "Bash(python3 test/python/run_all.py breath exciter click octave)",
       "Bash(build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/samples/jump_notes.wav)",
-      "Bash(python3 test/python/run_all.py octave)"
+      "Bash(python3 test/python/run_all.py octave)",
+      "Bash(cmake --build build --target CanaryVoiceTune_Tests CanaryVoiceTune_VST3 -- -j4)"
     ]
   }
 }

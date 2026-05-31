@@ -71,14 +71,14 @@
     },
     {
       "id": "exciter_on",
-      "description": "Exciter at +12 dB should add measurable HF harmonic energy vs exciter_off",
+      "description": "Exciter at +6 dB should add measurable HF harmonic energy vs exciter_off",
       "cpp_renderer": "Exciter",
       "settings": {
         "engine": "modern",
         "attack_ms": 100,
         "release_ms": 250,
         "vibrato": 1.0,
-        "exciter_db": 12,
+        "exciter_db": 6,
         "sibilants_db": 0,
         "breath_gate_db": 0,
         "pop_filter_db": 0

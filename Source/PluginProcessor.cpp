@@ -112,7 +112,7 @@ void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
       setParam("ATTACK", 20.0f);
       setParam("RELEASE", 150.0f);
       setParam("VIBRATO", 0.8f);
-      setParam("EXCITER", 1.5f);
+      setParam("EXCITER", 0.75f);
       setParam("SIBILANTS", 0.0f);
       setParam("BREATH", -35.0f);
       setParam("POP", -12.0f);
@@ -141,7 +141,7 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
       juce::ParameterID{"SIBILANTS", 1}, "Sibilants", -12.0f, 12.0f, 0.0f));
   // Exciter: harmonic enhancer level (0.0 dB to 12.0 dB)
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"EXCITER", 1}, "Exciter", 0.0f, 12.0f, 0.0f));
+      juce::ParameterID{"EXCITER", 1}, "Exciter", 0.0f, 6.0f, 0.0f));
   // Breath Gate: detector threshold; 0 dB disables it.
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"BREATH", 1}, "Breath", -48.0f, 0.0f, 0.0f));

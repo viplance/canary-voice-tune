@@ -17,21 +17,25 @@ void runExciterTest(const juce::String& filename)
     
     int block_size = 256;
     detector.prepare(sampleRate, block_size);
+    // Use Classic engine (zero latency) so exciter effect is immediately
+    // audible in the output without a multi-thousand-sample prefill delay.
     shifterOff.prepare(sampleRate, block_size);
     shifterOn.prepare(sampleRate, block_size);
-    
+    shifterOff.setTuningMode(1); // Classic
+    shifterOn.setTuningMode(1);  // Classic
+
     shifterOff.setExciter(0.0f, false);
-    shifterOn.setExciter(12.0f, false);
-    shifterOff.setBreathGate(0.0f, false); // disabled
-    shifterOn.setBreathGate(0.0f, false);  // disabled
-    
+    shifterOn.setExciter(6.0f, false);
+    shifterOff.setBreathGate(0.0f, false);
+    shifterOn.setBreathGate(0.0f, false);
+
     int numBlocks = numSamples / block_size;
-    
+
     juce::AudioBuffer<float> outOff(1, numSamples);
     juce::AudioBuffer<float> outOn(1, numSamples);
     outOff.clear();
     outOn.clear();
-    
+
     for (int b = 0; b < numBlocks; ++b) {
         juce::AudioBuffer<float> blockOff(2, block_size);
         juce::AudioBuffer<float> blockOn(2, block_size);
@@ -41,10 +45,15 @@ void runExciterTest(const juce::String& filename)
             blockOff.copyFrom(c, 0, monoBuffer.getReadPointer(0, b * block_size), block_size);
             blockOn.copyFrom(c, 0, monoBuffer.getReadPointer(0, b * block_size), block_size);
         }
-        
+
+        // Pass isVoiced=true so VocalEffectsProcessor::processPostPitch
+        // actually runs the exciter (it gates on the voiced flag).
+        shifterOff.setTargetShift(1.0f, 0.0f, 0.0f, true, 0.0f, 0.0f);
+        shifterOn.setTargetShift(1.0f, 0.0f, 0.0f, true, 0.0f, 0.0f);
+
         shifterOff.process(blockOff);
         shifterOn.process(blockOn);
-        
+
         outOff.copyFrom(0, b * block_size, blockOff.getReadPointer(0), block_size);
         outOn.copyFrom(0, b * block_size, blockOn.getReadPointer(0), block_size);
     }

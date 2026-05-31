@@ -109,7 +109,7 @@ void VocalEffectsProcessor::setToneShaping(float sibilantsDb, float breathDb)
 
 void VocalEffectsProcessor::setExciter(float exciterDb, bool isConsonant)
 {
-    if (exciterDb > 12.0f) exciterDb = 12.0f;
+    if (exciterDb > 6.0f) exciterDb = 6.0f;
     if (exciterDb < 0.0f) exciterDb = 0.0f;
     this->exciterDb = exciterDb;
     this->isConsonantActive = isConsonant;
@@ -245,22 +245,27 @@ void VocalEffectsProcessor::processPostPitch(juce::AudioBuffer<float>& buffer)
     // ----- 1) Exciter -----
     if (exciterDb > 0.01f) {
         float consonantScale = isConsonantActive ? 0.0f : 1.0f;
-        float exciterGain = consonantScale * std::pow(10.0f, (exciterDb - 12.0f) / 20.0f);
-        
+        // Mix gain: 0 dB → nearly silent addition, 6 dB → full addition.
+        float exciterGain = consonantScale * std::pow(10.0f, exciterDb / 20.0f);
+        // Drive scales with exciterDb so harmonics are actually audible at
+        // typical vocal levels (~-20 dBFS). Without extra drive the soft-clip
+        // stays in the nearly-linear region and produces almost no harmonics.
+        float drive = 4.0f * std::pow(10.0f, exciterDb / 40.0f);
+
         for (int c = 0; c < procChans; ++c) {
             float* dst = (c == 0) ? L : R;
             for (int i = 0; i < numSamples; ++i) {
                 float x = dst[i];
                 float xHigh = exciterCrossover[c].processSample(x);
-                
-                float xDrive = xHigh * 4.0f;
+
+                float xDrive = xHigh * drive;
                 float f_pos = (xDrive + 1.0f) / (1.0f + std::abs(xDrive + 1.0f)) - 0.5f;
                 float f_neg = (-xDrive + 1.0f) / (1.0f + std::abs(-xDrive + 1.0f)) - 0.5f;
-                
+
                 float xEven = 0.5f * (f_pos + f_neg);
                 float xOdd  = 0.5f * (f_pos - f_neg);
                 float xHarm = xEven - xOdd;
-                
+
                 float xHarmFiltered = exciterHarmonicFilter[c].processSample(xHarm);
                 dst[i] += exciterGain * xHarmFiltered;
             }
