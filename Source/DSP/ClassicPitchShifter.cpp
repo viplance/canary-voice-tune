@@ -182,10 +182,12 @@ void ClassicPitchShifter::setTargetShift(float ratio, float attackMs, float rele
     isVoiced_ = isVoicedDebounced;
 
     float target = isVoiced_ ? currentRatio : 1.0f;
-    float timeMs = isVoiced_ ? attackMs : 5.0f; // Fixed extremely fast 5ms release to prevent "quacking"
-    float fastMs = 3.0f;
+    // Enforce a safe minimum smoothing time of 15.0 ms for both attack and release in Classic mode
+    // to prevent block-boundary ratio step clicks and modulation buzz artifacts at very short attack settings.
+    float timeMs = isVoiced_ ? juce::jmax(attackMs, 15.0f) : 15.0f;
+    float fastMs = 15.0f;
     float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
-    if (trackingMs < 1.0f) trackingMs = 1.0f;
+    if (trackingMs < 15.0f) trackingMs = 15.0f;
     float timeS = trackingMs / 1000.0f;
     alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
     targetRatio = target;

@@ -131,7 +131,7 @@ float PitchDetector::process(const float *audioData, int numSamples) {
   //   hfRatio > 0.55        -> high-band-heavy unvoiced consonant
   //   yinMinValue > 0.45    -> no clear periodicity in the YIN search
   bool loudEnough  = (rms > 0.015f);
-  bool unvoicedLike = (zcr > 0.10f) || (hfRatio > 0.10f)
+  bool unvoicedLike = (zcr > 0.15f) || (hfRatio > 0.28f)
                   || (lastYinMinValue > 0.40f && rawPitch <= 0.0f);
   consonantFlag = loudEnough && unvoicedLike;
 
@@ -223,12 +223,17 @@ float PitchDetector::process(const float *audioData, int numSamples) {
     // harmonic blips), it stays near the true note pitch even when the normal
     // lastValidPitch has already been contaminated.
     //
-    // When pitchEst is ~2× slowAnchor (ratio 1.6–2.5), we hold slowAnchor
-    // instead.  This catches both the "mixed-buffer onset" case and the
-    // "transitional phoneme between notes" case seen at ~6.9 s in long_melody.
+    // When pitchEst is ~2×, ~3x, or ~4x slowAnchor (ratio 1.6–2.55, 2.55-3.45, 3.45-4.6) or ~0.5x, ~0.33x, or ~0.25x slowAnchor
+    // (ratio 0.44–0.56, 0.30–0.36, 0.22–0.28), we hold slowAnchor instead. This catches mixed-buffer onsets,
+    // harmonic and subharmonic errors, and transitional phoneme errors, while preserving large melodic jumps like sixths.
     if (slowAnchor > 0.0f && pitchEst > 0.0f) {
       float octaveRatio = pitchEst / slowAnchor;
-      if (octaveRatio > 1.6f && octaveRatio < 2.5f) {
+      if ((octaveRatio > 1.60f && octaveRatio < 2.55f) ||
+          (octaveRatio > 2.55f && octaveRatio < 3.45f) ||
+          (octaveRatio > 3.45f && octaveRatio < 4.60f) ||
+          (octaveRatio > 0.39f && octaveRatio < 0.63f) ||
+          (octaveRatio > 0.29f && octaveRatio < 0.39f) ||
+          (octaveRatio > 0.21f && octaveRatio < 0.29f)) {
         pitchEst = slowAnchor;
       }
     }
@@ -239,7 +244,9 @@ float PitchDetector::process(const float *audioData, int numSamples) {
       } else {
         float r = pitchEst / slowAnchor;
         if (r > 0.75f && r < 1.335f) { // ±6 semitones
-          slowAnchor = slowAnchor * 0.85f + pitchEst * 0.15f;
+          // Track legitimate pitch changes faster (coefficient 0.35f) to prevent
+          // tracking lag during slides, keeping the octave guard extremely accurate.
+          slowAnchor = slowAnchor * 0.65f + pitchEst * 0.35f;
         }
         // Outside ±6 st: anchor stays frozen until pitch returns to its range.
       }
@@ -348,39 +355,41 @@ float PitchDetector::getPitchYin() {
     }
   }
 
-  // 4b. Octave-down sanity check: when YIN locked onto the 2nd harmonic of a
-  // low voice, the true fundamental sits at ~2× tau and gives a strictly
+  // 4b. Harmonic sanity check: when YIN locked onto a harmonic (e.g. 2nd or 3rd) of a
+  // low voice, the true fundamental sits at ~mult × tau and gives a strictly
   // DEEPER minimum than the harmonic. We only switch to the longer tau if it
   // is *meaningfully* better — not merely comparable — otherwise pure tones
   // (whose subharmonics produce equally-low YIN minima at every multiple of
   // the period) get mis-detected an octave low.
   if (tauEstimate > 0) {
-    int doubleTau = tauEstimate * 2;
-    if (doubleTau < halfBufferSize - 1) {
-      float curVal = yinBuffer[tauEstimate];
-      int searchLo = juce::jmax(1, (int)(doubleTau * 0.9));
-      int searchHi = juce::jmin(halfBufferSize - 2, (int)(doubleTau * 1.1));
-      int bestT = doubleTau;
-      float bestV = yinBuffer[doubleTau];
-      for (int t = searchLo; t <= searchHi; ++t) {
-        if (yinBuffer[t] < bestV) { bestV = yinBuffer[t]; bestT = t; }
-      }
-      // Check that the double-tau candidate is actually a local minimum.
-      bool isLocalMin = (bestT > 1 && bestT < halfBufferSize - 1 &&
-                         yinBuffer[bestT] <= yinBuffer[bestT - 1] &&
-                         yinBuffer[bestT] <= yinBuffer[bestT + 1]);
+    float curVal = yinBuffer[tauEstimate];
+    for (int mult = 2; mult <= 3; ++mult) {
+      int multTau = tauEstimate * mult;
+      if (multTau < halfBufferSize - 1) {
+        int searchLo = juce::jmax(1, (int)(multTau * 0.9));
+        int searchHi = juce::jmin(halfBufferSize - 2, (int)(multTau * 1.1));
+        int bestT = multTau;
+        float bestV = yinBuffer[multTau];
+        for (int t = searchLo; t <= searchHi; ++t) {
+          if (yinBuffer[t] < bestV) { bestV = yinBuffer[t]; bestT = t; }
+        }
+        // Check that the candidate is actually a local minimum.
+        bool isLocalMin = (bestT > 1 && bestT < halfBufferSize - 1 &&
+                           yinBuffer[bestT] <= yinBuffer[bestT - 1] &&
+                           yinBuffer[bestT] <= yinBuffer[bestT + 1]);
 
-      // Original condition: switch to double_tau only when current tau is poor.
-      bool origCondition = (curVal > 0.35f && bestV < curVal * 0.7f && bestV < 0.15f);
-      // Extended condition: 2nd-harmonic trap — even when the current tau has a
-      // clean dip (curVal ≤ 0.35), if double_tau is substantially deeper
-      // (≤ 75% of current) and reasonably clean (< 0.15), the current tau is
-      // likely locking onto the 2nd harmonic of the true fundamental.
-      // This fixes octave-up jumps on voiced vowels with strong 2nd harmonics.
-      bool extCondition = (bestV < curVal * 0.75f && bestV < 0.15f);
+        // Original condition: switch to fundamental only when current tau is poor.
+        bool origCondition = (curVal > 0.35f && bestV < curVal * 0.7f && bestV < 0.25f);
+        // Extended condition: harmonic trap — even when the current tau has a
+        // clean dip (curVal ≤ 0.35), if the fundamental is substantially deeper
+        // (≤ 75% of current) and reasonably clean (< 0.25), the current tau is
+        // likely locking onto a harmonic of the true fundamental.
+        bool extCondition = (bestV < curVal * 0.75f && bestV < 0.25f);
 
-      if (isLocalMin && (origCondition || extCondition)) {
-        tauEstimate = bestT;
+        if (isLocalMin && (origCondition || extCondition)) {
+          tauEstimate = bestT;
+          break; // Found fundamental
+        }
       }
     }
   }
@@ -414,10 +423,10 @@ float PitchDetector::getPitchYin() {
     //     pushed steady D3 (curVal≈0.14) up to its 2nd harmonic (bestSubV≈0.30).
     //     So the slack collapses to ~0 and we refuse unless the shorter dip is
     //     genuinely at least as deep.
-    // Interpolate the slack: full (0.10) at curVal≥0.35, none at curVal≤0.20.
+    // Interpolate the slack: full (0.14) at curVal≥0.35, minimum (0.08) at curVal≤0.20.
     float cleanFrac = juce::jlimit(0.0f, 1.0f, (curVal - 0.20f) / (0.35f - 0.20f));
-    const float kSubharmonicSlack = 0.10f * cleanFrac; // shorter dip may be this much worse
-    const float kSubharmonicAbsMax = 0.50f;  // ...but must still be reasonably deep
+    const float kSubharmonicSlack = 0.08f + 0.06f * cleanFrac; // guarantee a minimum slack of 0.08
+    const float kSubharmonicAbsMax = 0.50f;  // allow snapping even during noisy onsets
     for (int divisor = 4; divisor >= 2; --divisor) {
       int subTau = tauEstimate / divisor;
       if (subTau >= 10) { // Keep period reasonable (e.g. >10 samples)
@@ -439,10 +448,10 @@ float PitchDetector::getPitchYin() {
                            yinBuffer[bestSubT] <= yinBuffer[bestSubT - 1] &&
                            yinBuffer[bestSubT] <= yinBuffer[bestSubT + 1]);
 
-        // Snap up only if the shorter period's dip is comparably deep (proving
-        // the current tau was a subharmonic, not the fundamental) and clean.
-        bool comparablyDeep = (bestSubV <= curVal + kSubharmonicSlack) &&
-                              (bestSubV < kSubharmonicAbsMax);
+        // Snap up only if the shorter period's dip is absolutely clean (bestSubV < 0.18f) OR
+        // comparably deep (proving the current tau was a subharmonic, not the fundamental) and clean.
+        bool comparablyDeep = (bestSubV < 0.18f) ||
+                              ((bestSubV <= curVal + kSubharmonicSlack) && (bestSubV < kSubharmonicAbsMax));
         if (isLocalMin && comparablyDeep) {
           tauEstimate = bestSubT;
           break; // Snapped to the shortest valid divisor (highest pitch)

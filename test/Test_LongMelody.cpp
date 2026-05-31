@@ -163,6 +163,60 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
     std::cout << "  [" << label << "] rendered -> " << wavPath << std::endl;
 }
 
+void assertNoDetectorOctaveJumpsNearSevenSeconds(const juce::AudioBuffer<float>& input,
+                                                 double sampleRate)
+{
+    struct Window {
+        float startSeconds, endSeconds;
+        int expectedMidi;
+        const char* name;
+    };
+    static const Window windows[] = {
+        { 6.93f, 7.15f, 59, "B3  (#13)" },
+        { 7.15f, 7.33f, 58, "A#3 (#14)" },
+        { 7.40f, 7.62f, 59, "B3  (#15)" },
+    };
+
+    const int blockSize = 256;
+    PitchDetector detector;
+    detector.prepare(sampleRate, blockSize);
+
+    const int numBlocks = input.getNumSamples() / blockSize;
+    int octaveErrors = 0;
+
+    for (int b = 0; b < numBlocks; ++b) {
+        const float* blockData = input.getReadPointer(0, b * blockSize);
+        detector.process(blockData, blockSize);
+        const float hz = detector.getInstantPitch();
+        if (hz <= 0.0f) continue;
+
+        const float timeSeconds = ((float)b + 0.5f) * (float)blockSize / (float)sampleRate;
+        for (const auto& w : windows) {
+            if (timeSeconds < w.startSeconds || timeSeconds > w.endSeconds) continue;
+
+            const float midiF = 69.0f + 12.0f * std::log2(hz / 440.0f);
+            const int midi = (int)std::round(midiF);
+            const int absError = std::abs(midi - w.expectedMidi);
+            if (absError >= 8) {
+                ++octaveErrors;
+                std::cerr << "  ERROR: " << w.name << " block " << b
+                          << " at " << timeSeconds << "s tracked as "
+                          << hz << " Hz / MIDI " << midi
+                          << " (expected near MIDI " << w.expectedMidi << ")"
+                          << std::endl;
+            }
+        }
+    }
+
+    if (octaveErrors > 0) {
+        std::cerr << "  RESULT: FAIL (detector octave jumps near 7s: "
+                  << octaveErrors << ")" << std::endl;
+        std::exit(1);
+    }
+
+    std::cout << "  Detector octave audit near 7s: PASS" << std::endl;
+}
+
 } // namespace
 
 void runLongMelodyTest(const juce::String& filename)
@@ -175,6 +229,7 @@ void runLongMelodyTest(const juce::String& filename)
 
     renderEngine(monoBuffer, sampleRate, 0, "MODERN",  "test/result/long_melody_modern.wav");
     renderEngine(monoBuffer, sampleRate, 1, "CLASSIC", "test/result/long_melody_classic.wav");
+    assertNoDetectorOctaveJumpsNearSevenSeconds(monoBuffer, sampleRate);
 
-    std::cout << "  RESULT: PASS (rendered long_melody_modern.wav and long_melody_classic.wav)" << std::endl;
+    std::cout << "  RESULT: PASS (rendered outputs and verified no detector octave jumps near 7s)" << std::endl;
 }
