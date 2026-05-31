@@ -19,7 +19,17 @@
       "Bash(sed -i '' 's/            detectedCount++;//' test/Test_BreathGate.cpp)",
       "Bash(python3 test/check_results.py)",
       "Bash(python3 test/python/run_all.py)",
-      "Bash(python3 test/python/run_all.py breath exciter click)"
+      "Bash(python3 test/python/run_all.py breath exciter click)",
+      "Bash(python3 test/python/run_all.py melody)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(json.dumps\\(t, indent=2\\)\\) for t in d['tests'] if 'long_melody' in t['id']]\")",
+      "Bash(python3 test/python/diagnose_failures.py)",
+      "Bash(python3 test/python/diagnose_root_cause.py)",
+      "Bash(python3 test/python/diagnose_shifter_lag.py)",
+      "Bash(build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests)",
+      "Bash(build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/samples/long_melody.wav)",
+      "Bash(python3 test/python/run_all.py breath exciter click octave)",
+      "Bash(build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests test/samples/jump_notes.wav)",
+      "Bash(python3 test/python/run_all.py octave)"
     ]
   }
 }

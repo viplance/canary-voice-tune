@@ -87,7 +87,12 @@ private:
   // Used to flush the median ring early so a new-note onset doesn't inherit
   // pitches from a previous phrase separated by silence.
   int   silentBlockCount = 0;
-  static constexpr int kMedianFlushBlocks = 2; // flush after this many silent blocks
+  // Flush median + anchor only after a genuine inter-phrase silence (≥8 blocks
+  // ≈ 46 ms at 44.1 kHz / 256). Short consonant gaps (1–3 blocks) must NOT
+  // flush the anchor — the anchor is the only protection against onset octave
+  // jumps, and resetting it on every consonant leaves the first vowel block
+  // unguarded.
+  static constexpr int kMedianFlushBlocks = 8;
 
   // Slow-moving pitch anchor: EMA that only updates when the current estimate
   // is within ±6 semitones of itself.  Used by the octave-continuity guard to

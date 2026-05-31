@@ -246,8 +246,6 @@ float PitchDetector::process(const float *audioData, int numSamples) {
       } else {
         float r = pitchEst / slowAnchor;
         if (r > 0.75f && r < 1.335f) { // ±6 semitones
-          // Track legitimate pitch changes faster (coefficient 0.35f) to prevent
-          // tracking lag during slides, keeping the octave guard extremely accurate.
           slowAnchor = slowAnchor * 0.65f + pitchEst * 0.35f;
         }
         // Outside ±6 st: anchor stays frozen until pitch returns to its range.
@@ -273,13 +271,17 @@ float PitchDetector::process(const float *audioData, int numSamples) {
     holdCounter = 0;
   } else {
     ++silentBlockCount;
-    // Flush the median ring after a short run of silent blocks so that the
-    // first voiced block of the next note is not dragged toward the previous
-    // note's pitch by stale median values.
-    if (silentBlockCount >= kMedianFlushBlocks) {
+    // Flush the median ring quickly (2 blocks) so stale note-tail pitches
+    // don't drag the next onset. The slowAnchor is flushed only after a
+    // genuine inter-phrase silence (kMedianFlushBlocks = 8 blocks ≈ 46 ms)
+    // so that short consonant gaps don't strip the octave guard right before
+    // the next vowel starts.
+    if (silentBlockCount >= 2) {
       for (auto& v : medianHistory) v = 0.0f;
       medianIndex = 0;
       medianFilled = 0;
+    }
+    if (silentBlockCount >= kMedianFlushBlocks) {
       slowAnchor = 0.0f;
     }
 
@@ -399,199 +401,60 @@ float PitchDetector::getPitchYin() {
     }
   }
 
-  // 4c. Octave-up sanity check (octave-down prevention): when YIN locked onto
-  // a subharmonic (e.g. 2×, 3x, or 4x the true period) because the true fundamental
-  // was noisy or had strong harmonics and missed the absolute threshold,
-  // we check if a shorter period (tauEstimate / divisor) has a
-  // reasonably deep local minimum. If so, we snap back to the higher octave.
+  // 4c. Octave-down prevention: if YIN locked onto a subharmonic (period too
+  // long = pitch too low), snap to the shorter period.
   if (tauEstimate > 0) {
     float curVal = yinBuffer[tauEstimate];
-    // Snapping to a shorter period is only legitimate when the current tau was
-    // itself a SUBHARMONIC of the true fundamental — i.e. the difference
-    // function dips at least as deep at the shorter period as it does here.
-    // YIN's own minima are monotonically meaningful that way: a real
-    // fundamental's tau has the deepest (or near-deepest) dip, and integer
-    // multiples of it dip comparably. A mere HARMONIC of the true fundamental
-    // (the octave-up trap) produces a SHALLOWER dip at the shorter period, so
-    // we must refuse to snap there.
-    //
-    // Rule: the candidate shorter-period minimum must be no worse than the
-    // current one within a slack, AND clean in absolute terms. The slack is
-    // the crux:
-    //   * When curVal is POOR (current tau not a clean fundamental — typical at
-    //     a note onset), the true fundamental and its subharmonic dip about
-    //     equally; YIN says "prefer the shorter period", so we allow a generous
-    //     slack and snap up. This is the legitimate octave-DOWN correction.
-    //   * When curVal is CLEAN (current tau already a deep, confident
-    //     fundamental — a sustained vowel), a shallower dip at the shorter
-    //     period is just a HARMONIC. Snapping there is the octave-UP error that
-    //     pushed steady D3 (curVal≈0.14) up to its 2nd harmonic (bestSubV≈0.30).
-    //     So the slack collapses to ~0 and we refuse unless the shorter dip is
-    //     genuinely at least as deep.
-    // Interpolate the slack: full (0.14) at curVal≥0.35, minimum (0.08) at curVal≤0.20.
+    // Base slack: generous when curVal is poor (onset), tight when clean
+    // (sustained vowel — don't snap to a harmonic).
     float cleanFrac = juce::jlimit(0.0f, 1.0f, (curVal - 0.20f) / (0.35f - 0.20f));
-    const float kSubharmonicSlack = 0.08f + 0.06f * cleanFrac; // guarantee a minimum slack of 0.08
-    const float kSubharmonicAbsMax = 0.50f;  // allow snapping even during noisy onsets
+    float kSlack = 0.10f + 0.06f * cleanFrac;
+
+    // If slowAnchor or lastValidPitch hints at a shorter period, allow a
+    // looser snap — the history confirms this is not a harmonic trap.
+    float refHz = (slowAnchor > 0.0f) ? slowAnchor : lastValidPitch;
+
     for (int divisor = 4; divisor >= 2; --divisor) {
       int subTau = tauEstimate / divisor;
-      if (subTau >= 10) { // Keep period reasonable (e.g. >10 samples)
-        int searchLo = juce::jmax(2, (int)(subTau * 0.9));
-        int searchHi = juce::jmin(halfBufferSize - 2, (int)(subTau * 1.1));
-        int bestSubT = subTau;
-        float bestSubV = 1000.0f;
+      if (subTau < 10) continue;
 
-        // Find the minimum in the search window around the sub-harmonic
-        for (int t = searchLo; t <= searchHi; ++t) {
-          if (yinBuffer[t] < bestSubV) {
-            bestSubV = yinBuffer[t];
-            bestSubT = t;
-          }
-        }
+      int searchLo = juce::jmax(2, (int)(subTau * 0.88f));
+      int searchHi = juce::jmin(halfBufferSize - 2, (int)(subTau * 1.12f));
+      int bestSubT = subTau;
+      float bestSubV = 1000.0f;
+      for (int t = searchLo; t <= searchHi; ++t) {
+        if (yinBuffer[t] < bestSubV) { bestSubV = yinBuffer[t]; bestSubT = t; }
+      }
 
-        // Check if it's a local minimum in the YIN buffer
-        bool isLocalMin = (bestSubT > 1 && bestSubT < halfBufferSize - 1 &&
-                           yinBuffer[bestSubT] <= yinBuffer[bestSubT - 1] &&
-                           yinBuffer[bestSubT] <= yinBuffer[bestSubT + 1]);
+      bool isLocalMin = (bestSubT > 1 && bestSubT < halfBufferSize - 1 &&
+                         yinBuffer[bestSubT] <= yinBuffer[bestSubT - 1] &&
+                         yinBuffer[bestSubT] <= yinBuffer[bestSubT + 1]);
+      if (!isLocalMin) continue;
 
-        // Snap up only if the shorter period's dip is absolutely clean (bestSubV < 0.18f) OR
-        // comparably deep (proving the current tau was a subharmonic, not the fundamental) and clean.
-        bool comparablyDeep = (bestSubV < 0.18f) ||
-                              ((bestSubV <= curVal + kSubharmonicSlack) && (bestSubV < kSubharmonicAbsMax));
-        if (isLocalMin && comparablyDeep) {
-          tauEstimate = bestSubT;
-          break; // Snapped to the shortest valid divisor (highest pitch)
-        }
+      float candidateHz = (float)currentSampleRate / (float)bestSubT;
+
+      // Does history confirm this shorter period is near the expected pitch?
+      bool anchorConfirms = (refHz > 0.0f) && (candidateHz / refHz > 0.75f) &&
+                            (candidateHz / refHz < 1.335f); // within ±6 st
+
+      // With anchor confirmation, accept even a shallow dip (snap up is safe).
+      // Without confirmation, require the dip to be clean or comparably deep.
+      bool deepEnough = anchorConfirms
+          ? (bestSubV < 0.45f)
+          : ((bestSubV < 0.18f) || (bestSubV <= curVal + kSlack && bestSubV < 0.50f));
+
+      if (deepEnough) {
+        tauEstimate = bestSubT;
+        break;
       }
     }
   }
 
-  // 4d. Final candidate scoring with normalized autocorrelation and continuity.
-  //
-  // YIN's first-threshold rule is deliberately pitch-responsive, but singing
-  // vowels can contain a strong second formant or harmonic that makes a
-  // shorter-period dip look locally convincing. Before committing, compare a
-  // small family of period candidates (current tau, plausible multiples and
-  // divisors, plus the recent continuity anchors) using two independent
-  // measures:
-  //   * CMNDF depth from YIN (lower is better);
-  //   * normalized autocorrelation clarity at the same lag (higher is better).
-  // A continuity penalty lets the detector move to real new notes, but makes
-  // octave-family candidates beat the current note only when they are clearly
-  // better, which is exactly where formant-driven "quack" usually fails.
-  if (tauEstimate > 0) {
-    auto circularAt = [this](int pos) -> float {
-      int p = pos % yinBufferSize;
-      if (p < 0) p += yinBufferSize;
-      return circularBuffer[(size_t)p];
-    };
-
-    auto normalizedCorrAt = [&](int tau) -> float {
-      if (tau <= 0 || tau >= halfBufferSize) return -1.0f;
-      double xy = 0.0, xx = 0.0, yy = 0.0;
-      for (int i = 0; i < halfBufferSize; ++i) {
-        float x = circularAt(writeIndex - yinBufferSize + i);
-        float y = circularAt(writeIndex - yinBufferSize + i + tau);
-        xy += (double)x * (double)y;
-        xx += (double)x * (double)x;
-        yy += (double)y * (double)y;
-      }
-      if (xx <= 1e-12 || yy <= 1e-12) return -1.0f;
-      return (float)(xy / (std::sqrt(xx * yy) + 1e-12));
-    };
-
-    auto bestLocalTau = [&](int centerTau) -> int {
-      if (centerTau <= 1) return -1;
-      int radius = juce::jmax(2, (int)std::round((float)centerTau * 0.06f));
-      int lo = juce::jmax(2, centerTau - radius);
-      int hi = juce::jmin(halfBufferSize - 2, centerTau + radius);
-      int bestT = centerTau;
-      float bestV = yinBuffer[centerTau];
-      for (int t = lo; t <= hi; ++t) {
-        if (yinBuffer[t] < bestV) {
-          bestV = yinBuffer[t];
-          bestT = t;
-        }
-      }
-      return bestT;
-    };
-
-    auto continuityPenalty = [&](int tau) -> float {
-      float candidateHz = (float)currentSampleRate / (float)juce::jmax(1, tau);
-      float refHz = 0.0f;
-      if (slowAnchor > 0.0f)       refHz = slowAnchor;
-      else if (lastRawPitch > 0.0f) refHz = lastRawPitch;
-      else if (lastValidPitch > 0.0f) refHz = lastValidPitch;
-      if (refHz <= 0.0f) return 0.0f;
-
-      float semitones = 12.0f * std::abs(std::log2(candidateHz / refHz));
-      if (semitones <= 0.75f) return 0.0f;
-      if (semitones <= 5.0f)  return semitones * 0.015f;
-      if (semitones <= 8.0f)  return 0.08f + (semitones - 5.0f) * 0.035f;
-      return 0.20f + (semitones - 8.0f) * 0.065f;
-    };
-
-    bool hasContinuityRef = (slowAnchor > 0.0f || lastRawPitch > 0.0f || lastValidPitch > 0.0f);
-    float baseYin = yinBuffer[tauEstimate];
-    float baseCorr = normalizedCorrAt(tauEstimate);
-
-    struct Candidate {
-      int tau = -1;
-      float yin = 1.0f;
-      float corr = -1.0f;
-      float score = -1000.0f;
-    };
-
-    Candidate best;
-    auto consider = [&](int centerTau) {
-      int t = bestLocalTau(centerTau);
-      if (t <= 1 || t >= halfBufferSize - 1) return;
-
-      bool isLocalMin = (yinBuffer[t] <= yinBuffer[t - 1] &&
-                         yinBuffer[t] <= yinBuffer[t + 1]);
-      if (! isLocalMin) return;
-
-      float y = yinBuffer[t];
-      float c = normalizedCorrAt(t);
-      if (c < 0.08f || y > 0.55f) return;
-
-      // With no continuity reference (e.g. after consonants), trust YIN's
-      // first-threshold candidate unless a longer-period "fundamental" is
-      // decisively better. Otherwise a resonant vowel/formant can pull the
-      // detector to an octave-down subharmonic on note starts.
-      if (! hasContinuityRef && t > tauEstimate) {
-        bool clearlyBetter = (y < baseYin * 0.70f) && (c >= baseCorr - 0.02f);
-        if (! clearlyBetter) return;
-      }
-
-      // Prefer a lower fundamental only when continuity exists; without that
-      // reference the first-threshold YIN candidate is the safer default.
-      float longerTauBias = (t > tauEstimate)
-          ? (hasContinuityRef ? juce::jlimit(0.0f, 0.04f, 0.014f * std::log2((float)t / (float)tauEstimate)) : 0.0f)
-          : 0.0f;
-      float shorterTauPenalty = (t < tauEstimate)
-          ? juce::jlimit(0.0f, 0.08f, 0.025f * std::log2((float)tauEstimate / (float)t))
-          : 0.0f;
-
-      Candidate cand;
-      cand.tau = t;
-      cand.yin = y;
-      cand.corr = c;
-      cand.score = (1.0f - y) + 0.45f * c + longerTauBias
-                 - shorterTauPenalty - continuityPenalty(t);
-
-      if (cand.score > best.score) best = cand;
-    };
-
-    consider(tauEstimate);
-    for (int mult = 2; mult <= 4; ++mult) consider(tauEstimate * mult);
-    for (int div = 2; div <= 4; ++div) consider(tauEstimate / div);
-    if (lastRawPitch > 0.0f)  consider((int)std::round(currentSampleRate / lastRawPitch));
-    if (slowAnchor > 0.0f)    consider((int)std::round(currentSampleRate / slowAnchor));
-
-    if (best.tau > 0) {
-      tauEstimate = best.tau;
-    }
-  }
+  // Step 4d removed: the autocorrelation+continuity candidate scoring was
+  // replaced by the slowAnchor octave-fold in process(). Keeping both caused
+  // the scoring to fight the anchor on note onsets, producing the very jumps
+  // it was meant to prevent. Steps 4b and 4c (harmonic/subharmonic guards)
+  // already handle octave-family errors inside YIN itself.
 
 
   // Record the minimum's depth so callers can tell "I found a clear vowel"
