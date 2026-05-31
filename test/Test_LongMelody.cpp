@@ -28,6 +28,12 @@ struct TuneState {
     int   candidateStableSamples = 0;
     long  voicedSampleCount = 0;
     void reset() { *this = TuneState{}; }
+    void resetNoteLock() {
+        // Mirrors PluginProcessor::resetNoteLockState — keeps smoothedMidi.
+        releaseMidi = -1; attackSamples = 0; noteHeldSamples = 0;
+        smoothedTargetMidi = -1.0f; voicedSampleCount = 0;
+        candidateMidi = -1; candidateStableSamples = 0;
+    }
 };
 
 // Mirror of chooseTargetNoteAndRatio: returns ratio.
@@ -113,9 +119,9 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
     const int   numSamples = input.getNumSamples();
     const int   numBlocks  = numSamples / block_size;
 
-    const float vibratoAmount = 0.5f;
-    const float attackMs      = 50.0f;
-    const float releaseMs     = 100.0f;
+    const float vibratoAmount = 0.0f;
+    const float attackMs      = 0.1f;
+    const float releaseMs     = 10.0f;
 
     PitchDetector detector;
     PitchShifter  shifter;
@@ -142,7 +148,7 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
         detector.process(blockData, block_size);
         bool  isConsonant = detector.isConsonant();
         float pitchHz     = detector.getInstantPitch();
-        bool  isVoiced    = (pitchHz > 50.0f) && !isConsonant && rms > 0.02f;
+        bool  isVoiced    = (pitchHz > 50.0f) && !isConsonant && rms > 0.01f;
 
         juce::AudioBuffer<float> blockBuf(2, block_size);
         for (int c = 0; c < 2; ++c) blockBuf.copyFrom(c, 0, blockData, block_size);
@@ -152,7 +158,7 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
             ratio = computeRatio(tune, pitchHz, activeKeys, (float)block_size, sr,
                                  attackMs, releaseMs, vibratoAmount);
         else
-            tune.reset();
+            tune.resetNoteLock();
 
         shifter.setTargetShift(ratio, attackMs, isVoiced ? releaseMs : 10.0f,
                                isVoiced, isVoiced ? pitchHz : 0.0f, vibratoAmount);

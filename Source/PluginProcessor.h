@@ -58,6 +58,7 @@ private:
   // ---- processBlock helpers ----
   void buildMonoMix(const juce::AudioBuffer<float>& buffer);
   void resetVoicingState();
+  void resetNoteLockState();
   // Computes the corrected target ratio for the current block. Returns the
   // midi note that the singer is being tuned to (used for keyboard display)
   // and writes the ratio into outRatio.
@@ -90,6 +91,8 @@ private:
   std::atomic<float> *keyParams[88] = {nullptr};
 
   std::vector<float> monoMix; // scratch buffer for pitch detector input
+  float channelEnergyL = 0.0f; // slow EMA of per-channel energy for stable channel selection
+  float channelEnergyR = 0.0f;
 
   // Per-voiced-segment tracking (audio thread only)
   //

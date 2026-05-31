@@ -204,10 +204,6 @@ bool CanaryVoiceTuneAudioProcessor::isBusesLayoutSupported(
 
 void CanaryVoiceTuneAudioProcessor::buildMonoMix(
     const juce::AudioBuffer<float>& buffer) {
-  // Pick whichever channel has more energy in this block. A naive (L+R)/2
-  // would silently cancel anti-phase stereo material (Haas spreads, stereo
-  // wideners) and the detector would then report unvoiced even though the
-  // singer is clearly audible.
   int n = buffer.getNumSamples();
   monoMix.resize((size_t)n);
   if (buffer.getNumChannels() == 1) {
@@ -216,9 +212,17 @@ void CanaryVoiceTuneAudioProcessor::buildMonoMix(
   }
   const float* l = buffer.getReadPointer(0);
   const float* r = buffer.getReadPointer(1);
-  double eL = 0.0, eR = 0.0;
-  for (int i = 0; i < n; ++i) { eL += l[i] * l[i]; eR += r[i] * r[i]; }
-  std::copy_n((eL >= eR) ? l : r, n, monoMix.data());
+  // Update slow EMA of per-channel energy (time constant ~200 ms at 44100/256).
+  // Using a slow average instead of a per-block winner prevents the detector
+  // from seeing a different-phase channel every block when stereo material has
+  // similar energy on L and R (Haas, wideners) — that was causing the
+  // slowAnchor to see phase-shifted pitch estimates and fire the octave guard.
+  float blockEL = 0.0f, blockER = 0.0f;
+  for (int i = 0; i < n; ++i) { blockEL += l[i]*l[i]; blockER += r[i]*r[i]; }
+  const float emaAlpha = 0.05f;
+  channelEnergyL = channelEnergyL * (1.0f - emaAlpha) + blockEL * emaAlpha;
+  channelEnergyR = channelEnergyR * (1.0f - emaAlpha) + blockER * emaAlpha;
+  std::copy_n((channelEnergyL >= channelEnergyR) ? l : r, n, monoMix.data());
 }
 
 void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
@@ -226,6 +230,19 @@ void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
   attackSamples          = 0;
   noteHeldSamples        = 0;
   smoothedMidi           = -1.0f;
+  smoothedTargetMidi     = -1.0f;
+  voicedSampleCount      = 0;
+  candidateMidi          = -1;
+  candidateStableSamples = 0;
+}
+
+void CanaryVoiceTuneAudioProcessor::resetNoteLockState() {
+  // Partial reset used on consonants and voiced onsets: clears the note-lock
+  // state machine but keeps smoothedMidi so the pitch smoother doesn't
+  // re-initialise from an unstable attack-frame YIN estimate.
+  releaseMidi            = -1;
+  attackSamples          = 0;
+  noteHeldSamples        = 0;
   smoothedTargetMidi     = -1.0f;
   voicedSampleCount      = 0;
   candidateMidi          = -1;
@@ -512,7 +529,12 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   float detectedHz  = (instantHz > 0.0f) ? instantHz : smoothedHz;
   bool  isConsonant = pitchDetector.isConsonant();
   bool  isBreath    = pitchDetector.isBreath();
-  bool  isVoiced    = (detectedHz > 0.0f) && !isConsonant;
+
+  float blockSumSq = 0.0f;
+  for (int i = 0; i < (int)monoMix.size(); ++i) blockSumSq += monoMix[i] * monoMix[i];
+  float blockRms = (monoMix.size() > 0) ? std::sqrt(blockSumSq / (float)monoMix.size()) : 0.0f;
+
+  bool  isVoiced    = (detectedHz > 0.0f) && !isConsonant && (blockRms > 0.01f);
 
 
   // ---- Maintain voicing state at segment boundaries ----------------------
@@ -529,13 +551,13 @@ void CanaryVoiceTuneAudioProcessor::processBlock(
   bool  consonantFastRelease = false;
   float effectiveReleaseMs   = releaseMs;
   if (isConsonant) {
-    resetVoicingState();
+    resetNoteLockState();
     releaseTailSamplesRemaining = 0;
     releaseTailMidi = -1;
     consonantFastRelease = true;
     effectiveReleaseMs = 10.0f;
   } else if (isVoiced && !wasVoiced) {
-    resetVoicingState();
+    resetNoteLockState();
     releaseTailSamplesRemaining = 0;
     releaseTailMidi = -1;
   } else if (!isVoiced) {
