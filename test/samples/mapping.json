@@ -22,7 +22,7 @@
           "reference_result": "breath_gate_no_breath_out.wav",
           "min_db": -9.0,
           "max_db": -2.0,
-          "description": "Output RMS should be 2\u20139 dB lower than the no-breath reference"
+          "description": "Output RMS should be 2–9 dB lower than the no-breath reference"
         }
       ]
     },
@@ -47,7 +47,7 @@
           "type": "rms_attenuation_vs_source",
           "min_db": -3.0,
           "max_db": 3.0,
-          "description": "Output RMS should be within \u00b13 dB of input (gate should not fire)"
+          "description": "Output RMS should be within ±3 dB of input (gate should not fire)"
         }
       ]
     },
@@ -118,13 +118,13 @@
           "window_long_ms": 10,
           "rms_ratio_threshold": 8.0,
           "active_floor": 0.02,
-          "description": "No RMS burst exceeding 8\u00d7 surrounding envelope in active regions"
+          "description": "No RMS burst exceeding 8× surrounding envelope in active regions"
         }
       ]
     },
     {
       "id": "octave_jump",
-      "description": "Classic mode must not jump octaves on jump_notes.wav \u2014 D3 region stays near MIDI 50",
+      "description": "Classic mode must not jump octaves on jump_notes.wav — D3 region stays near MIDI 50",
       "cpp_renderer": "OctaveJump",
       "settings": {
         "engine": "classic",
@@ -147,13 +147,13 @@
           ],
           "target_midi": 50,
           "tolerance_st": 6.0,
-          "description": "D3 (MIDI 50) region \u2014 no octave-up jump to D4 (MIDI 62)"
+          "description": "D3 (MIDI 50) region — no octave-up jump to D4 (MIDI 62)"
         }
       ]
     },
     {
       "id": "long_melody_classic",
-      "description": "Classic engine tunes all 19 notes of long_melody.wav to within \u00b10.6 st",
+      "description": "Classic engine tunes all 19 notes of long_melody.wav to within ±0.6 st",
       "cpp_renderer": "LongMelody",
       "settings": {
         "engine": "classic",
@@ -242,8 +242,8 @@
             {
               "start": 6.24,
               "end": 6.43,
-              "midi": 63,
-              "name": "D#4 (12)"
+              "midi": 64,
+              "name": "E4  (12)"
             },
             {
               "start": 6.93,
@@ -295,7 +295,7 @@
     },
     {
       "id": "long_melody_modern",
-      "description": "Modern engine tunes all 19 notes of long_melody.wav to within \u00b10.6 st",
+      "description": "Modern engine tunes all 19 notes of long_melody.wav to within ±0.6 st",
       "cpp_renderer": "LongMelody",
       "settings": {
         "engine": "modern",
@@ -384,8 +384,8 @@
             {
               "start": 6.24,
               "end": 6.43,
-              "midi": 63,
-              "name": "D#4 (12)"
+              "midi": 64,
+              "name": "E4  (12)"
             },
             {
               "start": 6.93,

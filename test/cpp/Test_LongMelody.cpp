@@ -29,9 +29,10 @@ struct TuneState {
     long  voicedSampleCount = 0;
     void reset() { *this = TuneState{}; }
     void resetNoteLock() {
-        // Mirrors PluginProcessor::resetNoteLockState — keeps smoothedMidi.
+        // Mirrors PluginProcessor::resetNoteLockState — resets smoothedMidi so
+        // the selector re-seeds from the new note's pitch, not the previous one.
         releaseMidi = -1; attackSamples = 0; noteHeldSamples = 0;
-        smoothedTargetMidi = -1.0f; voicedSampleCount = 0;
+        smoothedMidi = -1.0f; smoothedTargetMidi = -1.0f; voicedSampleCount = 0;
         candidateMidi = -1; candidateStableSamples = 0;
     }
 };
@@ -46,7 +47,7 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
     float floatMidi = 69.0f + 12.0f * std::log2(detectedHz / 440.0f);
 
     float blockDt = blockSize / sr;
-    const float vibTimeMs = 201.0f;
+    const float vibTimeMs = 120.0f;
     if (s.smoothedMidi < 0.0f) {
         s.smoothedMidi = floatMidi;
     } else {
@@ -102,7 +103,7 @@ float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys,
     rawTargetMidi = rawTargetMidi * (1.0f - lockBypass) + effectiveMidi * lockBypass;
 
     float blockDtMs = 1000.0f * blockSize / sr;
-    float portamentoTimeMs = 30.0f;
+    float portamentoTimeMs = 15.0f;
     float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
     if (s.smoothedTargetMidi < 0.0f) s.smoothedTargetMidi = rawTargetMidi;
     else s.smoothedTargetMidi += targetAlpha * (rawTargetMidi - s.smoothedTargetMidi);
@@ -130,6 +131,20 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
     shifter.setTuningMode(tuningMode);
     shifter.setBreathGate(0.0f, false);
     shifter.setExciter(0.0f, false);
+
+    // Pre-feed silence through the shifter so state-machines (especially
+    // RubberBand's internal analysis window) reach steady state before any
+    // vocal audio arrives. This mirrors real-time plugin use where the engine
+    // has been running since DAW playback started.
+    {
+        juce::AudioBuffer<float> silenceBuf(2, block_size);
+        silenceBuf.clear();
+        int warmupBlocks = (int)(sampleRate * 0.5) / block_size; // 500 ms
+        for (int wb = 0; wb < warmupBlocks; ++wb) {
+            shifter.setTargetShift(1.0f, attackMs, 10.0f, false, 0.0f, 0.0f);
+            shifter.process(silenceBuf);
+        }
+    }
 
     bool activeKeys[88];
     for (int i = 0; i < 88; ++i) activeKeys[i] = true;
@@ -178,7 +193,19 @@ void renderEngine(const juce::AudioBuffer<float>& input, double sampleRate,
     }
 
     TestHelpers::writeWavFile(wavPath, out, sampleRate);
-    std::cout << "  [" << label << "] rendered -> " << wavPath << std::endl;
+    int latSamples = shifter.getLatencySamples();
+    // Write latency metadata so the Python verifier can compensate.
+    {
+        std::string metaPath = std::string(wavPath) + ".lat";
+        if (FILE* f = std::fopen(metaPath.c_str(), "w")) {
+            std::fprintf(f, "%d\n", latSamples);
+            std::fclose(f);
+        }
+    }
+    std::cout << "  [" << label << "] rendered -> " << wavPath
+              << "  latency=" << latSamples
+              << " samples (" << (1000.0 * latSamples / sampleRate) << " ms)"
+              << std::endl;
 }
 
 } // namespace

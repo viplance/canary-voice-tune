@@ -36,7 +36,14 @@
       "Bash(curl -s \"https://muted.io/js/main.min.js\")",
       "Bash(curl -s \"https://muted.io/js/pitchy.min.js\")",
       "Bash(python3 test/python/benchmark_detectors.py)",
-      "Bash(awk 'NR>=470 && NR<=490 {print NR\": \"$0}')"
+      "Bash(awk 'NR>=470 && NR<=490 {print NR\": \"$0}')",
+      "Bash(python3 test/python/test_long_melody.py)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(json.dumps\\(t,indent=2\\)\\) for t in d if 'long_melody' in t.get\\('id',''\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(json.dumps\\(t,indent=2\\)\\) for k,t in d.items\\(\\) if 'long_melody' in k]\")",
+      "Bash(python3 test/python/run_all.py accuracy)",
+      "Bash(python3 test/python/diagnose_pipeline.py)",
+      "Bash(cmake --build build --target CanaryVoiceTune_Tests -- -j4)",
+      "Bash(cmake --build build -- -j4)"
     ]
   }
 }

@@ -171,10 +171,14 @@ void ModernPitchShifter::setTargetShift(float ratio, float attackMs, float relea
     currentRatio = ratio;
 
     float target = isVoiced ? currentRatio : 1.0f;
-    float timeMs = isVoiced ? attackMs : 5.0f; // Fixed extremely fast 5ms release to prevent "quacking"
-    float fastMs = 3.0f;
-    float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
-    if (trackingMs < 1.0f) trackingMs = 1.0f;
+    // RubberBand requires gradual pitchScale changes to avoid onset artifacts.
+    // minMs is the floor regardless of attack/vibrato settings.
+    // When vibratoAmount=0: trackingMs = max(minMs, timeMs) — respects attack control.
+    // When vibratoAmount=1: trackingMs = minMs — tight tracking so vibrato passes through.
+    float minMs   = 15.0f;
+    float timeMs  = isVoiced ? std::max(minMs, attackMs) : 15.0f;
+    float trackingMs = timeMs * (1.0f - vibratoAmount) + minMs * vibratoAmount;
+    if (trackingMs < minMs) trackingMs = minMs;
     float timeS = trackingMs / 1000.0f;
     alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
     targetRatio = target;

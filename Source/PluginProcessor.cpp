@@ -238,11 +238,13 @@ void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
 
 void CanaryVoiceTuneAudioProcessor::resetNoteLockState() {
   // Partial reset used on consonants and voiced onsets: clears the note-lock
-  // state machine but keeps smoothedMidi so the pitch smoother doesn't
-  // re-initialise from an unstable attack-frame YIN estimate.
+  // state machine. smoothedMidi is reset to the current detected pitch so that
+  // the note selector sees the new note immediately instead of lagging behind
+  // the previous note's smoothed value across a legato/portamento transition.
   releaseMidi            = -1;
   attackSamples          = 0;
   noteHeldSamples        = 0;
+  smoothedMidi           = -1.0f;   // will be seeded from detectedHz on next voiced block
   smoothedTargetMidi     = -1.0f;
   voicedSampleCount      = 0;
   candidateMidi          = -1;
@@ -264,9 +266,9 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   // jumps (real note changes) bypass the smoothing so the tracker doesn't lag
   // a ratio behind on melodic transitions.
   float blockDt = blockSize / sr;
-  // Always smooth aggressively enough to recover the centre pitch; the
-  // wobble around it is reintroduced via the clamp below.
-  float vibTimeMs = 201.0f;
+  // 120 ms is fast enough to follow legato semitone steps between adjacent
+  // notes while still averaging out typical 5 Hz vocal vibrato (period ~200 ms).
+  float vibTimeMs = 120.0f;
   if (smoothedMidi < 0.0f) {
     smoothedMidi = floatMidi;
   } else {
@@ -390,9 +392,11 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
                        + effectiveMidi * lockBypass;
 
   // Short portamento smooths the ±1 semitone step that occurs when bestMidi
-  // crosses a bucket boundary.
+  // crosses a bucket boundary.  15 ms is fast enough to settle within a 40 ms
+  // analysis window (e.g. a 120 ms note with 80 ms onset-skip) while still
+  // being inaudible as a click on note transitions.
   float blockDtMs       = 1000.0f * blockSize / sr;
-  float portamentoTimeMs = 30.0f;
+  float portamentoTimeMs = 15.0f;
   float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
   if (smoothedTargetMidi < 0.0f) smoothedTargetMidi = rawTargetMidi;
   else                            smoothedTargetMidi += targetAlpha

@@ -6,7 +6,7 @@ Usage:
     python3 test/python/run_all.py            # run all tests
     python3 test/python/run_all.py t1 t2      # run specific tests by id
 
-Available test ids: breath, exciter, click, octave, melody
+Available test ids: breath, exciter, click, octave, melody, accuracy
 
 Exit code 0 = all checks pass, non-zero = at least one check failed.
 """
@@ -22,13 +22,15 @@ import test_exciter
 import test_classic_click
 import test_octave_jump
 import test_long_melody
+import test_melody_accuracy
 
 ALL_TESTS = {
-    "breath":  test_breath_gate.run,
-    "exciter": test_exciter.run,
-    "click":   test_classic_click.run,
-    "octave":  test_octave_jump.run,
-    "melody":  test_long_melody.run,
+    "breath":   test_breath_gate.run,
+    "exciter":  test_exciter.run,
+    "click":    test_classic_click.run,
+    "octave":   test_octave_jump.run,
+    "melody":   test_long_melody.run,
+    "accuracy": test_melody_accuracy.run,
 }
 
 def main():

@@ -284,14 +284,20 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                 if (! wasVoicedState[c]) {
                     wasVoicedState[c] = true;
                     if (trueOnset) {
-                        // The DLL tracker already sits at writePos - guard after a true
-                        // silence, so absoluteOutputAddr[c] is already correct.
-                        // We don't reposition — just reset bookkeeping so the first
-                        // cycle jump can fire after the refractory window.
+                        // After silence the DLL tracker sits at writePos - kGuardSamples.
+                        // kGuardSamples (64) is smaller than a typical voice period
+                        // (~178 samples at B3), so the overrun guard fires almost
+                        // immediately and jumps the pointer back by one period, creating
+                        // a phase-discontinuity glitch at the start of the note.
+                        // Mask this unavoidable first jump by starting a short crossfade:
+                        // the output linearly fades in over kOnsetCrossFadeDuration
+                        // samples, suppressing the glitch while the cycle-tracker settles.
+                        if (onsetFadeRemaining <= 0) {
+                            onsetFadeTotal     = kOnsetCrossFadeDuration;
+                            onsetFadeRemaining = kOnsetCrossFadeDuration;
+                        }
                         samplesSinceLastJump[c] = 0;
                         strandedSamples[c] = 0;
-                        // No pointer repositioning, no crossfade: avoids amplitude dip
-                        // on rising onsets caused by the old period-look-back placement.
                     }
                     // If not a true onset: pointer was still near correct phase, continue.
                 }
