@@ -140,8 +140,8 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
       juce::Path quill;
       quill.startNewSubPath(p0);
       quill.cubicTo(p1, p2, p3);
-      g.setColour(juce::Colour::fromRGB(220, 175, 75).withAlpha(alphaQuill));
-      g.strokePath(quill, juce::PathStrokeType(1.2f));
+      g.setColour(juce::Colour::fromRGB(228, 182, 80).withAlpha(alphaQuill));
+      g.strokePath(quill, juce::PathStrokeType(1.8f));
       
       juce::Path barbs;
       for (float t = 0.04f; t < 0.96f; t += 0.016f) {
@@ -168,22 +168,22 @@ void CanaryVoiceTuneAudioProcessorEditor::paint(juce::Graphics &g) {
           barbs.startNewSubPath(pt);
           barbs.quadraticTo(rightControl, rightEnd);
       }
-      g.setColour(juce::Colour::fromRGB(220, 175, 75).withAlpha(alphaBarbs));
-      g.strokePath(barbs, juce::PathStrokeType(0.7f));
+      g.setColour(juce::Colour::fromRGB(228, 182, 80).withAlpha(alphaBarbs));
+      g.strokePath(barbs, juce::PathStrokeType(1.0f));
   };
 
   // Draw two overlapping procedural golden feathers curving from top-left
-  drawFeather(juce::Point<float>(20.0f, -10.0f), 
-              juce::Point<float>(90.0f, 25.0f), 
-              juce::Point<float>(170.0f, 75.0f), 
-              juce::Point<float>(220.0f, 150.0f), 
-              0.15f, 0.07f);
-              
-  drawFeather(juce::Point<float>(-10.0f, 30.0f), 
-              juce::Point<float>(50.0f, 60.0f), 
-              juce::Point<float>(110.0f, 100.0f), 
-              juce::Point<float>(145.0f, 160.0f), 
-              0.10f, 0.04f);
+  drawFeather(juce::Point<float>(20.0f, -10.0f),
+              juce::Point<float>(90.0f, 25.0f),
+              juce::Point<float>(170.0f, 75.0f),
+              juce::Point<float>(220.0f, 150.0f),
+              0.32f, 0.16f);
+
+  drawFeather(juce::Point<float>(-10.0f, 30.0f),
+              juce::Point<float>(50.0f, 60.0f),
+              juce::Point<float>(110.0f, 100.0f),
+              juce::Point<float>(145.0f, 160.0f),
+              0.24f, 0.11f);
 
   // 5. Soft Glassmorphism Control Board (Frosted glass panel behind knobs)
   juce::Rectangle<float> glassBoard (12.0f, 48.0f, w - 24.0f, 136.0f);

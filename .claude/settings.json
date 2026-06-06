@@ -43,7 +43,8 @@
       "Bash(python3 test/python/run_all.py accuracy)",
       "Bash(python3 test/python/diagnose_pipeline.py)",
       "Bash(cmake --build build --target CanaryVoiceTune_Tests -- -j4)",
-      "Bash(cmake --build build -- -j4)"
+      "Bash(cmake --build build -- -j4)",
+      "Bash(cmake --build . --target CanaryVoiceTune_VST3)"
     ]
   }
 }

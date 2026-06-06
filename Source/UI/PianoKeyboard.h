@@ -32,6 +32,11 @@ private:
     // Height (px) of the octave-number strip above the keys.
     static constexpr int kLabelStripH = 18;
 
+    // Bottom-corner rounding (px) of the keys, like a real keyboard. Top edges
+    // stay square so adjacent keys still butt together cleanly.
+    static constexpr float kWhiteKeyCorner = 3.0f;
+    static constexpr float kBlackKeyCorner = 2.0f;
+
     int currentlyDetectedNote = -1; // 0 to 87
 
     // Sub-components could be used, but since we only need one octave, custom painting is simpler.

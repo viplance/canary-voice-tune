@@ -1,6 +1,22 @@
 #include "PianoKeyboard.h"
 #include <cmath>
 
+namespace {
+// Build a path for a key rectangle with only its BOTTOM corners rounded, like a
+// real piano key. The top stays square so adjacent keys/labels still line up.
+juce::Path makeBottomRoundedKey(juce::Rectangle<float> r, float radius)
+{
+    radius = juce::jmin(radius, r.getWidth() * 0.5f, r.getHeight() * 0.5f);
+    juce::Path p;
+    if (radius < 0.5f) { p.addRectangle(r); return p; }
+    p.addRoundedRectangle(r.getX(), r.getY(), r.getWidth(), r.getHeight(),
+                          radius, radius,
+                          /*topLeft*/    false, /*topRight*/    false,
+                          /*bottomLeft*/ true,  /*bottomRight*/ true);
+    return p;
+}
+} // namespace
+
 PianoKeyboard::PianoKeyboard(juce::AudioProcessorValueTreeState& state) : apvts(state)
 {
 }
@@ -97,6 +113,8 @@ void PianoKeyboard::paint (juce::Graphics& g)
         auto param = apvts.getParameter("KEY_" + juce::String(i));
         bool enabled = param ? param->getValue() > 0.5f : true;
 
+        auto keyPath = makeBottomRoundedKey(bounds.toFloat(), kWhiteKeyCorner);
+
         juce::ColourGradient keyGrad (
             juce::Colours::white, 0.0f, (float)bounds.getY(),
             juce::Colour::fromRGB(246, 240, 226), 0.0f, (float)bounds.getBottom(),
@@ -108,7 +126,7 @@ void PianoKeyboard::paint (juce::Graphics& g)
         if (enabled) {
             g.setGradientFill(keyGrad);
         }
-        g.fillRect(bounds);
+        g.fillPath(keyPath);
 
         // Highlight currently detected note with Canary Gold glow
         if (i == currentlyDetectedNote && enabled) {
@@ -117,7 +135,7 @@ void PianoKeyboard::paint (juce::Graphics& g)
                 juce::Colour::fromRGB(235, 155, 10), 0.0f, (float)bounds.getBottom(),
                 false);
             g.setGradientFill(highlightGrad);
-            g.fillRect(bounds);
+            g.fillPath(keyPath);
         }
 
         // Clearly mark a DISABLED (out-of-scale) white key: dim it further and
@@ -125,7 +143,7 @@ void PianoKeyboard::paint (juce::Graphics& g)
         // the tint difference is subtle on bright displays.
         if (!enabled) {
             g.setColour(juce::Colours::black.withAlpha(0.10f));
-            g.fillRect(bounds);
+            g.fillPath(keyPath);
             float d = juce::jmin(6.0f, bounds.getWidth() * 0.28f);
             g.setColour(juce::Colour::fromRGB(150, 142, 128));
             g.fillEllipse(bounds.getCentreX() - d * 0.5f, bounds.getY() + 6.0f, d, d);
@@ -133,7 +151,7 @@ void PianoKeyboard::paint (juce::Graphics& g)
 
         // Draw soft, premium warm-grey white-key border
         g.setColour(juce::Colour::fromRGB(205, 195, 178));
-        g.drawRect(bounds, 1);
+        g.strokePath(keyPath, juce::PathStrokeType(1.0f));
 
         // Note name near the bottom of each white key.
         drawKeyLabel(g, bounds, getNoteName(i), enabled, false);
@@ -148,10 +166,12 @@ void PianoKeyboard::paint (juce::Graphics& g)
         auto param = apvts.getParameter("KEY_" + juce::String(i));
         bool enabled = param ? param->getValue() > 0.5f : true;
 
+        auto keyPath = makeBottomRoundedKey(bounds.toFloat(), kBlackKeyCorner);
+
         juce::Colour keyColor = enabled ? juce::Colour::fromRGB(45, 41, 37) : juce::Colour::fromRGB(120, 112, 103);
 
         g.setColour(keyColor);
-        g.fillRect(bounds);
+        g.fillPath(keyPath);
 
         // Highlight currently detected note with Canary Gold glow
         if (i == currentlyDetectedNote && enabled) {
@@ -160,10 +180,10 @@ void PianoKeyboard::paint (juce::Graphics& g)
                 juce::Colour::fromRGB(235, 155, 10), 0.0f, (float)bounds.getBottom(),
                 false);
             g.setGradientFill(highlightGrad);
-            g.fillRect(bounds);
+            g.fillPath(keyPath);
         }
 
-        // Elegant top-edge highlight on black keys
+        // Elegant top-edge highlight on black keys (square top edge)
         if (enabled && i != currentlyDetectedNote) {
             g.setColour(juce::Colours::white.withAlpha(0.12f));
             g.drawRect(bounds.withHeight(2), 1);
@@ -177,7 +197,7 @@ void PianoKeyboard::paint (juce::Graphics& g)
         }
 
         g.setColour(juce::Colour::fromRGB(25, 22, 20));
-        g.drawRect(bounds, 1);
+        g.strokePath(keyPath, juce::PathStrokeType(1.0f));
 
         // Black keys are intentionally left unlabelled.
     }
