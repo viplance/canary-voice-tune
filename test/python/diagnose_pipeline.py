@@ -184,6 +184,11 @@ def run_detector_on_file(wav_path):
                 if last_known_good > 0:
                     slow_anchor = last_known_good
                     pitch_est = fold(pitch_est)
+                    # Guard: reject onset estimate if >6 st from prior note
+                    if last_known_good > 0 and pitch_est > 0:
+                        seed_r = pitch_est / last_known_good
+                        if seed_r < 0.71 or seed_r > 1.41:
+                            pitch_est = last_known_good
                     slow_anchor = pitch_est
                     med_hist = [pitch_est] * MEDIAN_HIST
                     med_filled = MEDIAN_HIST
@@ -220,9 +225,9 @@ def run_detector_on_file(wav_path):
                         slow_anchor = slow_anchor * 0.70 + pitch_est * 0.30
 
             last_known_good = pitch_est
-            r2 = last_valid / pitch_est if last_valid > 0 else 0
+            out_alpha = 0.08 if voiced_since_onset > 26 else 0.30
             if 0.85 < (pitch_est / last_valid if last_valid > 0 else 0) < 1.18:
-                last_valid = last_valid * 0.7 + pitch_est * 0.3
+                last_valid = last_valid * (1.0 - out_alpha) + pitch_est * out_alpha
             else:
                 last_valid = pitch_est
             hold = 0
@@ -499,6 +504,11 @@ def simulate_pipeline(wav_in_path, attack_ms=0.1, release_ms=10.0):
                 if last_known_good > 0:
                     slow_anchor = last_known_good
                     pitch_est = fold(pitch_est)
+                    # Guard: reject onset estimate if >6 st from prior note
+                    if last_known_good > 0 and pitch_est > 0:
+                        seed_r = pitch_est / last_known_good
+                        if seed_r < 0.71 or seed_r > 1.41:
+                            pitch_est = last_known_good
                     slow_anchor = pitch_est
                     med_hist = [pitch_est] * MEDIAN_HIST
                     med_filled = MEDIAN_HIST

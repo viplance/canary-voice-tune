@@ -1,9 +1,11 @@
 """Test 10: Melody accuracy — Classic and Modern engines.
 
-Three checks per note, applied to both engines:
+Four checks per note, applied to both engines:
   1. Median pitch — must land on the correct note (catches wrong-note tuning).
   2. Pitch stability (std) — spread within the note must be low (catches glides/drift).
-  3. Inter-note artifacts — gaps between adjacent notes must not carry audible pitch
+  3. Octave-spike count — frames >5 st from target must be <3% of voiced frames
+     (catches detector octave errors that outlier removal hides from the std check).
+  4. Inter-note artifacts — gaps between adjacent notes must not carry audible pitch
      that belongs to neither neighbour (catches false glides / portamento leakage).
 
 Modern engine output is latency-compensated using the sidecar .lat file written by
@@ -20,6 +22,12 @@ from utils import (check, get_test, pitch_track, hz_to_midi,
 # Thresholds — strict enough to catch audible problems.
 MEDIAN_TOL_ST   = 0.7    # median must be within 0.7 st of target
 STABILITY_ST    = 1.2    # std of per-frame MIDI must be below this (after outlier removal)
+# Octave-spike: frames where output is >5 st from the target note.
+# 5 st is comfortably above vibrato (±2 st) but well below an octave (12 st),
+# so it catches real detector errors without flagging normal vibrato tracking.
+# Limit: max 2 spike frames per segment (brief glitches at note edges are allowed).
+SPIKE_TOL_ST    = 5.0
+SPIKE_MAX_FRAMES = 3
 GAP_MIN_SEC     = 0.04   # ignore gaps shorter than 40 ms (too short to hear)
 GAP_ARTIFACT_ST = 1.5    # pitch in a gap this far from both neighbours = artifact
 # Only flag gap artifacts when the output level is clearly audible.
@@ -91,6 +99,29 @@ def _check_note_stability(failures, label, seg, midi_vals):
     print(f"  [{tag}] {label} {note_name}  stability  ({detail})")
     if not ok:
         failures.append(f"{label} {note_name} unstable (std={std:.2f} st)")
+
+
+def _check_note_spikes(failures, label, seg, midi_vals):
+    """Check 3: count frames >SPIKE_TOL_ST from the target note (octave errors, drift).
+
+    The std check removes these as outliers before computing spread, so they are
+    invisible to it. This check counts them directly so audible octave spikes fail.
+    """
+    if not midi_vals:
+        return
+    target = seg["midi"]
+    spikes = [v for v in midi_vals if abs(v - target) > SPIKE_TOL_ST]
+    ok = len(spikes) <= SPIKE_MAX_FRAMES
+    note_name = seg["name"]
+    detail = (f"{len(spikes)} spike frame(s) >±{SPIKE_TOL_ST:.0f} st "
+              f"(limit {SPIKE_MAX_FRAMES})")
+    if spikes:
+        worst = max(spikes, key=lambda v: abs(v - target))
+        detail += f", worst {abs(worst - target):.1f} st ({worst:.1f} midi)"
+    tag = PASS_TAG if ok else FAIL_TAG
+    print(f"  [{tag}] {label} {note_name}  spikes  ({detail})")
+    if not ok:
+        failures.append(f"{label} {note_name} octave spikes ({len(spikes)} frames)")
 
 
 def _check_inter_note_artifacts(failures, label, segments, pitch_data,
@@ -237,6 +268,7 @@ def _audit_engine(failures, test_id, label):
         midi_vals = _midi_frames_in_window(pitch_data, seg_s, seg_e)
         _check_note_median(failures, label, seg, midi_vals)
         _check_note_stability(failures, label, seg, midi_vals)
+        _check_note_spikes(failures, label, seg, midi_vals)
 
     _check_inter_note_artifacts(failures, label, segments, pitch_data,
                                 latency_s, wav_path, sample_rate)

@@ -68,6 +68,9 @@ private:
   // voiced blocks have elapsed since the last silent/consonant block.
   int   voicedBlocksSinceOnset_ = 0;
   static constexpr int kOnsetGuardBlocks = 8;
+  // Blocks after which the output EMA switches to slow mode (vibrato suppression).
+  // 26 × 256/44100 ≈ 150 ms — enough to pass a clean attack before smoothing kicks in.
+  static constexpr int kSustainBlocks = 26;
 
   // Octave fold anchor
   float slowAnchor = 0.0f;

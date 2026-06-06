@@ -270,6 +270,12 @@ float PitchDetector::process(const float* audioData, int numSamples) {
         // Seed anchor from prior note so we fold the first estimate correctly.
         slowAnchor = ref;
         pitchEst   = foldToAnchor(pitchEst);
+        // Guard: if the seeded estimate is still >6 st from the reference
+        // (ratio outside [0.71, 1.41]), it is likely an octave-up AMDF error
+        // on a half-filled analysis window. Reject it and hold the reference.
+        float seedRatio = (ref > 0.0f) ? pitchEst / ref : 0.0f;
+        if (seedRatio < 0.71f || seedRatio > 1.41f)
+          pitchEst = ref;
         slowAnchor = pitchEst;
         for (auto& v : medianHistory) v = pitchEst;
         medianFilled = kMedianHistory;
@@ -320,9 +326,17 @@ float PitchDetector::process(const float* audioData, int numSamples) {
     confidence          = 1.0f - lastClarity;
     lastKnownGoodPitch_ = pitchEst;
 
+    // Output EMA alpha: fast on note attack (respond quickly to new notes),
+    // slow on sustained notes (suppress vibrato from reaching the shifter).
+    // kSustainBlocks ≈ 150 ms / block_duration. At 256/44100 ≈ 5.8 ms per block,
+    // 26 blocks ≈ 150 ms. After that, alpha drops from 0.30 to 0.08 (τ ≈ 72 ms),
+    // which keeps vibrato oscillations at ±2 st from reaching the output at full gain
+    // while still following genuine note changes (which exceed 1.18× threshold → snap).
+    float outAlpha = (voicedBlocksSinceOnset_ > kSustainBlocks) ? 0.08f : 0.30f;
+
     float ratio = lastValidPitch > 0.0f ? pitchEst / lastValidPitch : 0.0f;
     if (ratio > 0.85f && ratio < 1.18f)
-      lastValidPitch = lastValidPitch * 0.7f + pitchEst * 0.3f;
+      lastValidPitch = lastValidPitch * (1.0f - outAlpha) + pitchEst * outAlpha;
     else
       lastValidPitch = pitchEst;
     holdCounter = 0;
