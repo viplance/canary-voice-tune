@@ -252,6 +252,11 @@ void VocalEffectsProcessor::processPostPitch(juce::AudioBuffer<float>& buffer)
         // stays in the nearly-linear region and produces almost no harmonics.
         float drive = 4.0f * std::pow(10.0f, exciterDb / 40.0f);
 
+        // As the exciter is pushed harder, attenuate the odd-harmonic content a
+        // little more so the timbre leans toward the smoother even harmonics.
+        // oddWeight goes from ~1.0 at 0 dB down to ~0.55 at +6 dB.
+        float oddWeight = juce::jlimit(0.0f, 1.0f, 1.0f - 0.075f * exciterDb);
+
         for (int c = 0; c < procChans; ++c) {
             float* dst = (c == 0) ? L : R;
             for (int i = 0; i < numSamples; ++i) {
@@ -264,7 +269,7 @@ void VocalEffectsProcessor::processPostPitch(juce::AudioBuffer<float>& buffer)
 
                 float xEven = 0.5f * (f_pos + f_neg);
                 float xOdd  = 0.5f * (f_pos - f_neg);
-                float xHarm = xEven - xOdd;
+                float xHarm = xEven - oddWeight * xOdd;
 
                 float xHarmFiltered = exciterHarmonicFilter[c].processSample(xHarm);
                 dst[i] += exciterGain * xHarmFiltered;
