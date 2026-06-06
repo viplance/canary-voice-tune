@@ -116,11 +116,13 @@ def run_detector_on_file(wav_path):
     med_i = 0
     med_filled = 0
     slow_anchor = 0.0
+    out_of_range_count = 0
+    last_out_of_range_pitch = 0.0
     last_valid = 0.0
     hold = 0
     HOLD_FRAMES = 8
     voiced_since_onset = 0
-    ONSET_GUARD = 8
+    ONSET_GUARD = 2
     silent_blocks = 0
     FLUSH_BLOCKS = 8
     last_known_good = 0.0
@@ -187,10 +189,35 @@ def run_detector_on_file(wav_path):
                     med_filled = MEDIAN_HIST
                 else:
                     slow_anchor = pitch_est
+                out_of_range_count = 0
+                last_out_of_range_pitch = 0.0
             else:
-                r = pitch_est / slow_anchor
-                if 0.749 < r < 1.334:
-                    slow_anchor = slow_anchor * 0.70 + pitch_est * 0.30
+                r = folded / slow_anchor
+                if r < 0.749 or r > 1.334:
+                    is_stable = False
+                    if last_out_of_range_pitch > 0.0:
+                        r_diff = folded / last_out_of_range_pitch
+                        if 0.917 < r_diff < 1.091:
+                            is_stable = True
+
+                    if is_stable:
+                        out_of_range_count += 1
+                        if out_of_range_count >= 5:
+                            slow_anchor = raw_hz
+                            pitch_est = fold(raw_hz)
+                            out_of_range_count = 0
+                            last_out_of_range_pitch = 0.0
+                            med_hist = [pitch_est] * MEDIAN_HIST
+                            med_filled = MEDIAN_HIST
+                    else:
+                        out_of_range_count = 1
+                        last_out_of_range_pitch = folded
+                else:
+                    out_of_range_count = 0
+                    last_out_of_range_pitch = 0.0
+                    r_est = pitch_est / slow_anchor
+                    if 0.749 < r_est < 1.334:
+                        slow_anchor = slow_anchor * 0.70 + pitch_est * 0.30
 
             last_known_good = pitch_est
             r2 = last_valid / pitch_est if last_valid > 0 else 0
@@ -208,6 +235,8 @@ def run_detector_on_file(wav_path):
                 med_filled = 0
             if silent_blocks >= FLUSH_BLOCKS:
                 slow_anchor = 0.0
+                out_of_range_count = 0
+                last_out_of_range_pitch = 0.0
             if hold < HOLD_FRAMES and last_valid > 0:
                 hold += 1
                 results.append((t, last_valid, 'HOLD'))
@@ -358,13 +387,13 @@ def seg_stats(frames, t_start, t_end):
     return float(np.median(arr)), float(np.mean(arr)), float(np.std(arr)), len(arr)
 
 
-def gap_artifacts(frames, segs):
+def gap_artifacts(frames, segs, latency_s=0.0):
     """Count frames in gaps whose pitch belongs to neither neighbour."""
     count = 0
     details = []
     for i in range(len(segs) - 1):
-        g_s = segs[i]["end"]
-        g_e = segs[i+1]["start"]
+        g_s = segs[i]["end"] + latency_s
+        g_e = segs[i+1]["start"] + latency_s
         if g_e - g_s < 0.04:
             continue
         midi_a, midi_b = segs[i]["midi"], segs[i+1]["midi"]
@@ -399,11 +428,13 @@ def simulate_pipeline(wav_in_path, attack_ms=0.1, release_ms=10.0):
     med_i = 0
     med_filled = 0
     slow_anchor = 0.0
+    out_of_range_count = 0
+    last_out_of_range_pitch = 0.0
     last_valid = 0.0
     hold = 0
     HOLD_FRAMES = 8
     voiced_since_onset = 0
-    ONSET_GUARD = 8
+    ONSET_GUARD = 2
     silent_blocks = 0
     FLUSH_BLOCKS = 8
     last_known_good = 0.0
@@ -473,10 +504,35 @@ def simulate_pipeline(wav_in_path, attack_ms=0.1, release_ms=10.0):
                     med_filled = MEDIAN_HIST
                 else:
                     slow_anchor = pitch_est
+                out_of_range_count = 0
+                last_out_of_range_pitch = 0.0
             else:
-                r = pitch_est / slow_anchor
-                if 0.749 < r < 1.334:
-                    slow_anchor = slow_anchor * 0.70 + pitch_est * 0.30
+                r = folded / slow_anchor
+                if r < 0.749 or r > 1.334:
+                    is_stable = False
+                    if last_out_of_range_pitch > 0.0:
+                        r_diff = folded / last_out_of_range_pitch
+                        if 0.917 < r_diff < 1.091:
+                            is_stable = True
+
+                    if is_stable:
+                        out_of_range_count += 1
+                        if out_of_range_count >= 5:
+                            slow_anchor = raw_hz
+                            pitch_est = fold(raw_hz)
+                            out_of_range_count = 0
+                            last_out_of_range_pitch = 0.0
+                            med_hist = [pitch_est] * MEDIAN_HIST
+                            med_filled = MEDIAN_HIST
+                    else:
+                        out_of_range_count = 1
+                        last_out_of_range_pitch = folded
+                else:
+                    out_of_range_count = 0
+                    last_out_of_range_pitch = 0.0
+                    r_est = pitch_est / slow_anchor
+                    if 0.749 < r_est < 1.334:
+                        slow_anchor = slow_anchor * 0.70 + pitch_est * 0.30
 
             last_known_good = pitch_est
             if last_valid > 0 and 0.85 < pitch_est / last_valid < 1.18:
@@ -493,6 +549,8 @@ def simulate_pipeline(wav_in_path, attack_ms=0.1, release_ms=10.0):
                 med_filled = 0
             if silent_blocks >= FLUSH_BLOCKS:
                 slow_anchor = 0.0
+                out_of_range_count = 0
+                last_out_of_range_pitch = 0.0
             if hold < HOLD_FRAMES and last_valid > 0:
                 hold += 1
                 det_hz = last_valid
@@ -627,11 +685,23 @@ if __name__ == "__main__":
         if not out_wav.exists():
             print(f"  [{label}] {wav_name} not found — run C++ test first")
             continue
-        out_frames, _ = pitch_track(out_wav, block=2048, hop=512)
-        print(f"\n  ── Output pitch: {label} ──")
+        out_frames, out_sr = pitch_track(out_wav, block=2048, hop=512)
+
+        # Read latency if available
+        lat_path = Path(str(out_wav) + ".lat")
+        lat_s = 0.0
+        if lat_path.exists():
+            try:
+                lat_s = int(lat_path.read_text().strip()) / float(out_sr)
+            except:
+                pass
+        if lat_s > 0.0:
+            print(f"  [INFO] {label}: latency compensation {lat_s*1000:.0f} ms")
+
+        print(f"  ── Output pitch: {label} ──")
         for seg in SEGMENTS:
-            t_s = seg["start"] + ONSET_SKIP_S
-            t_e = seg["end"]
+            t_s = seg["start"] + ONSET_SKIP_S + lat_s
+            t_e = seg["end"] + lat_s
             vals = [hz_to_midi(hz) for ts, hz in out_frames if t_s <= ts <= t_e and hz > 0]
             if not vals:
                 print(f"     {seg['name']}: no frames")
@@ -651,9 +721,18 @@ if __name__ == "__main__":
         out_wav = RESULT_DIR / wav_name
         if not out_wav.exists():
             continue
-        out_frames, _ = pitch_track(out_wav, block=2048, hop=512)
+        out_frames, out_sr = pitch_track(out_wav, block=2048, hop=512)
         out_list = [(ts, hz, 'V') for ts, hz in out_frames]
-        n_art, details = gap_artifacts(out_list, SEGMENTS)
+
+        lat_path = Path(str(out_wav) + ".lat")
+        lat_s = 0.0
+        if lat_path.exists():
+            try:
+                lat_s = int(lat_path.read_text().strip()) / float(out_sr)
+            except:
+                pass
+
+        n_art, details = gap_artifacts(out_list, SEGMENTS, lat_s)
         print(f"  [{label}]  {n_art} artifact frames in gaps")
         for t, m, ma, mb in details[:8]:
             print(f"     t={t:.3f}s  midi={m:.1f}  (neighbours {ma},{mb})")

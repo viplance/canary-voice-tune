@@ -71,6 +71,8 @@ private:
 
   // Octave fold anchor
   float slowAnchor = 0.0f;
+  int   outOfRangeCount = 0;
+  float lastOutOfRangePitch = 0.0f;
   float foldToAnchor(float hz) const;
 
   // Last pitch from a voiced segment — survives silence/consonants so that

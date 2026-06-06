@@ -46,7 +46,11 @@
       "Bash(cmake --build build -- -j4)",
       "Bash(cmake --build . --target CanaryVoiceTune_VST3)",
       "Bash(cmake --build . --target CanaryVoiceTune_Tests)",
-      "Bash(./build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests)"
+      "Bash(./build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests)",
+      "Bash(grep -v '\\\\.h$')",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(echo \"C++ EXIT:$?\")",
+      "Bash(grep -iE \"Installing.*vst3$|Built target CanaryVoiceTune_VST3|error|Error\")"
     ]
   }
 }

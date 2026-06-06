@@ -4,6 +4,10 @@
 #include "Test_ClassicClick.h"
 #include "Test_OctaveJump.h"
 #include "Test_LongMelody.h"
+#include "Test_NoteMapping.h"
+#include "Test_NoteSelector.h"
+#include "Test_HighlightOctave.h"
+#include "Test_19Notes.h"
 #include "TestHelpers.h"
 #include "../../Source/DSP/PitchDetector.h"
 #include <iostream>
@@ -75,7 +79,13 @@ int main(int argc, char* argv[]) {
     runClassicClickTest("test/samples/dynamic_solo.wav");
     runOctaveJumpTest("test/samples/jump_notes.wav");
     runLongMelodyTest("test/samples/long_melody.wav");
+    
+    // Additional automated C++ validation tests
+    runNoteMappingTests();
+    runNoteSelectorTests();
+    runHighlightOctaveTest("test/samples/long_melody.wav");
+    run19NotesTest("test/samples/long_melody.wav");
 
-    std::cout << "\nAll renders complete. Run test/python/run_all.py to verify." << std::endl;
+    std::cout << "\nAll renders and C++ checks complete. Run test/python/run_all.py to verify." << std::endl;
     return 0;
 }

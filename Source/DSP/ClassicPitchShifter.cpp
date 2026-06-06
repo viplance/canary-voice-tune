@@ -249,21 +249,14 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
             }
 
             // smoothedPeriodSamples is used only for threshold decisions (stable).
-            // jumpPeriod uses the instantaneous targetPeriod so the pointer lands
-            // at the correct phase even when the note just changed and the smoother
-            // hasn't caught up yet (a 24-sample lag at B3->D#4 = 56° phase error).
-            // Sanity clamp: if targetPeriod deviates by >2x from smoothed, the
-            // detector had a transient octave-flip — fall back to smoothed so the
-            // jump doesn't land a half-period off (polarity flip artefact).
+            // jumpPeriod uses the instantaneous targetPeriod so the pointer always
+            // lands exactly in-phase with the fundamental period, even during large
+            // note transitions where the smoother hasn't caught up yet. Constraining
+            // it to a musical fifth of the smoothed period made big jumps fall back
+            // to a stale period, landing the pointer off-phase and producing loud
+            // clicks at note transitions.
             double period     = smoothedPeriodSamples[c];
-            double jumpPeriod = period; // fallback
-            if (targetPeriod > 0.0f) {
-                double ratio = (period > 0.0) ? (double)targetPeriod / period : 1.0;
-                // Accept targetPeriod only if it's within a musical fifth of smoothed
-                // (factor 0.67–1.5).  Outside that range the detector had a transient
-                // octave flip and the jump would land a half-period off (polarity flip).
-                jumpPeriod = (ratio > 0.67 && ratio < 1.5) ? (double)targetPeriod : period;
-            }
+            double jumpPeriod = (targetPeriod > 0.0f) ? (double)targetPeriod : period;
             samplesSinceLastJump[c]++;
 
             bool crossFadeTriggered = false;
@@ -284,18 +277,21 @@ void ClassicPitchShifter::process(juce::AudioBuffer<float>& buffer)
                 if (! wasVoicedState[c]) {
                     wasVoicedState[c] = true;
                     if (trueOnset) {
-                        // After silence the DLL tracker sits at writePos - kGuardSamples.
+                        // After a gap the DLL tracker sits at writePos - kGuardSamples.
                         // kGuardSamples (64) is smaller than a typical voice period
                         // (~178 samples at B3), so the overrun guard fires almost
                         // immediately and jumps the pointer back by one period, creating
                         // a phase-discontinuity glitch at the start of the note.
-                        // Mask this unavoidable first jump by starting a short crossfade:
-                        // the output linearly fades in over kOnsetCrossFadeDuration
-                        // samples, suppressing the glitch while the cycle-tracker settles.
-                        if (onsetFadeRemaining <= 0) {
-                            onsetFadeTotal     = kOnsetCrossFadeDuration;
-                            onsetFadeRemaining = kOnsetCrossFadeDuration;
-                        }
+                        //
+                        // Mask this with a *crossfade* (not a fade-from-zero): keep
+                        // playing the previous output tail as the secondary pointer
+                        // and fade it out while the new onset (primary) fades in.
+                        // A plain multiply-by-zero onset fade hard-cuts a still-loud
+                        // held tail to 0, producing a click at mid-phrase re-onsets
+                        // where the previous note hadn't decayed (e.g. zaberi ~3.7s).
+                        crossFadeOutputAddr[c] = absoluteOutputAddr[c];
+                        crossFadeGain[c]       = 1.0f;
+                        crossFadeIsOnset[c]    = true;
                         samplesSinceLastJump[c] = 0;
                         strandedSamples[c] = 0;
                     }

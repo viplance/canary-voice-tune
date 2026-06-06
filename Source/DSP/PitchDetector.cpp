@@ -32,6 +32,8 @@ void PitchDetector::prepare(double sampleRate, int samplesPerBlock) {
   silentBlockCount = 0;
   voicedBlocksSinceOnset_ = 0;
   slowAnchor    = 0.0f;
+  outOfRangeCount = 0;
+  lastOutOfRangePitch = 0.0f;
   lastKnownGoodPitch_ = 0.0f;
   lastValidPitch = 0.0f;
   lastRawPitch   = 0.0f;
@@ -251,7 +253,8 @@ float PitchDetector::process(const float* audioData, int numSamples) {
     lastRawPitch     = rawPitch;
     silentBlockCount = 0;
 
-    float pitchEst = foldToAnchor(rawPitch);
+    float foldedPitch = foldToAnchor(rawPitch);
+    float pitchEst = foldedPitch;
 
     medianHistory[medianIndex] = pitchEst;
     medianIndex = (medianIndex + 1) % kMedianHistory;
@@ -275,10 +278,42 @@ float PitchDetector::process(const float* audioData, int numSamples) {
       } else {
         slowAnchor = pitchEst;
       }
+      outOfRangeCount = 0;
+      lastOutOfRangePitch = 0.0f;
     } else {
-      float r = pitchEst / slowAnchor;
-      if (r > 0.749f && r < 1.334f)
-        slowAnchor = slowAnchor * 0.70f + pitchEst * 0.30f;
+      float r = foldedPitch / slowAnchor;
+      if (r < 0.749f || r > 1.334f) {
+        // Pitch is out of range. Check if it is close/stable compared to the
+        // previous out-of-range pitch (within ~1.5 semitones, i.e., ratio 0.917-1.091)
+        bool isStable = false;
+        if (lastOutOfRangePitch > 0.0f) {
+          float rDiff = foldedPitch / lastOutOfRangePitch;
+          if (rDiff > 0.917f && rDiff < 1.091f) {
+            isStable = true;
+          }
+        }
+        
+        if (isStable) {
+          outOfRangeCount++;
+          if (outOfRangeCount >= 5) {
+            slowAnchor = rawPitch;
+            pitchEst = foldToAnchor(rawPitch);
+            outOfRangeCount = 0;
+            lastOutOfRangePitch = 0.0f;
+            for (auto& v : medianHistory) v = pitchEst;
+            medianFilled = kMedianHistory;
+          }
+        } else {
+          outOfRangeCount = 1;
+          lastOutOfRangePitch = foldedPitch;
+        }
+      } else {
+        outOfRangeCount = 0;
+        lastOutOfRangePitch = 0.0f;
+        float rEst = pitchEst / slowAnchor;
+        if (rEst > 0.749f && rEst < 1.334f)
+          slowAnchor = slowAnchor * 0.70f + pitchEst * 0.30f;
+      }
     }
 
     instantPitch        = pitchEst;
@@ -298,8 +333,11 @@ float PitchDetector::process(const float* audioData, int numSamples) {
       for (auto& v : medianHistory) v = 0.0f;
       medianIndex = 0; medianFilled = 0;
     }
-    if (silentBlockCount >= kMedianFlushBlocks)
+    if (silentBlockCount >= kMedianFlushBlocks) {
       slowAnchor = 0.0f;
+      outOfRangeCount = 0;
+      lastOutOfRangePitch = 0.0f;
+    }
 
     if (holdCounter < holdFrames && lastValidPitch > 0.0f) {
       ++holdCounter;
