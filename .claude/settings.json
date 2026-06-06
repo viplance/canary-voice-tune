@@ -50,7 +50,9 @@
       "Bash(grep -v '\\\\.h$')",
       "Bash(echo \"EXIT:$?\")",
       "Bash(echo \"C++ EXIT:$?\")",
-      "Bash(grep -iE \"Installing.*vst3$|Built target CanaryVoiceTune_VST3|error|Error\")"
+      "Bash(grep -iE \"Installing.*vst3$|Built target CanaryVoiceTune_VST3|error|Error\")",
+      "Bash(cmake ..)",
+      "Bash(echo \"PY EXIT:$?\")"
     ]
   }
 }

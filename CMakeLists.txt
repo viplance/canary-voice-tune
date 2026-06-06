@@ -120,6 +120,7 @@ target_sources(CanaryVoiceTune_Tests PRIVATE
     test/cpp/TestRunner.cpp
     test/cpp/TestHelpers.h
     test/cpp/TestHelpers.cpp
+    test/cpp/TuneRender.h
     test/cpp/Test_BreathGate.h
     test/cpp/Test_BreathGate.cpp
     test/cpp/Test_Exciter.h
