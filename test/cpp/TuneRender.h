@@ -108,12 +108,12 @@ inline float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys
     return std::max(0.5f, std::min(2.0f, targetHz / detectedHz));
 }
 
-// Renders `input` (mono) through the full plugin path for a given engine
-// (0 = Modern, 1 = Classic) and Attack/Release. Returns the tuned mono output.
-inline juce::AudioBuffer<float> render(const juce::AudioBuffer<float>& input,
-                                       double sampleRate, int tuningMode,
-                                       float attackMs, float releaseMs,
-                                       float vibratoAmount = 0.0f)
+// Core render implementation — shared by both render() overloads.
+inline juce::AudioBuffer<float> renderWithKeys(const juce::AudioBuffer<float>& input,
+                                               double sampleRate, int tuningMode,
+                                               float attackMs, float releaseMs,
+                                               float vibratoAmount,
+                                               const bool activeKeys[88])
 {
     const int   block_size = 256;
     const float sr = (float)sampleRate;
@@ -140,9 +140,6 @@ inline juce::AudioBuffer<float> render(const juce::AudioBuffer<float>& input,
             shifter.process(silenceBuf);
         }
     }
-
-    bool activeKeys[88];
-    for (int i = 0; i < 88; ++i) activeKeys[i] = true;
 
     TuneState tune;
     juce::AudioBuffer<float> out(1, numSamples);
@@ -185,6 +182,33 @@ inline juce::AudioBuffer<float> render(const juce::AudioBuffer<float>& input,
     }
 
     return out;
+}
+
+// Renders with all 88 keys active (plugin default / long-melody use case).
+inline juce::AudioBuffer<float> render(const juce::AudioBuffer<float>& input,
+                                       double sampleRate, int tuningMode,
+                                       float attackMs, float releaseMs,
+                                       float vibratoAmount = 0.0f)
+{
+    bool keys[88];
+    for (int i = 0; i < 88; ++i) keys[i] = true;
+    return renderWithKeys(input, sampleRate, tuningMode, attackMs, releaseMs, vibratoAmount, keys);
+}
+
+// Renders with a specific set of MIDI notes active (piano-roll use case).
+// midiNotes is a list of MIDI note numbers (21–108) that are pressed.
+inline juce::AudioBuffer<float> renderWithNotes(const juce::AudioBuffer<float>& input,
+                                                double sampleRate, int tuningMode,
+                                                float attackMs, float releaseMs,
+                                                std::initializer_list<int> midiNotes,
+                                                float vibratoAmount = 0.0f)
+{
+    bool keys[88] = {};
+    for (int m : midiNotes) {
+        int idx = m - 21;
+        if (idx >= 0 && idx < 88) keys[idx] = true;
+    }
+    return renderWithKeys(input, sampleRate, tuningMode, attackMs, releaseMs, vibratoAmount, keys);
 }
 
 } // namespace TuneRender

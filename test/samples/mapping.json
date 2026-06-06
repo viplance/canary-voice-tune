@@ -124,30 +124,33 @@
     },
     {
       "id": "octave_jump",
-      "description": "Classic mode must not jump octaves on jump_notes.wav — D3 region stays near MIDI 50",
+      "description": "Classic mode locks to correct notes on jump_notes.wav (Eb3/F3/F#3/Ab3, active keys only)",
       "cpp_renderer": "OctaveJump",
       "settings": {
         "engine": "classic",
         "attack_ms": 0,
-        "release_ms": 0,
+        "release_ms": 50,
         "vibrato": 0.0,
         "exciter_db": 0,
         "sibilants_db": 0,
         "breath_gate_db": 0,
-        "pop_filter_db": 0
+        "pop_filter_db": 0,
+        "active_midi_notes": [51, 53, 54, 56]
       },
       "source": "jump_notes.wav",
       "result": "jump_notes_out.wav",
       "checks": [
         {
-          "type": "pitch_in_range",
-          "region_sec": [
-            0.1,
-            1.8
-          ],
-          "target_midi": 50,
-          "tolerance_st": 6.0,
-          "description": "D3 (MIDI 50) region — no octave-up jump to D4 (MIDI 62)"
+          "type": "pitch_segments",
+          "tolerance_st": 1.0,
+          "onset_skip_ms": 60,
+          "segments": [
+            { "start": 0.12, "end": 0.40, "midi": 51, "name": "Eb3 (MIDI 51)" },
+            { "start": 0.52, "end": 0.73, "midi": 54, "name": "F#3 (MIDI 54) first" },
+            { "start": 0.78, "end": 0.98, "midi": 53, "name": "F3  (MIDI 53)" },
+            { "start": 1.07, "end": 1.26, "midi": 54, "name": "F#3 (MIDI 54) second" },
+            { "start": 1.35, "end": 1.88, "midi": 56, "name": "Ab3 (MIDI 56)" }
+          ]
         }
       ]
     },
