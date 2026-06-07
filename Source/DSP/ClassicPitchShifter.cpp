@@ -182,12 +182,18 @@ void ClassicPitchShifter::setTargetShift(float ratio, float attackMs, float rele
     isVoiced_ = isVoicedDebounced;
 
     float target = isVoiced_ ? currentRatio : 1.0f;
-    // Enforce a safe minimum smoothing time of 15.0 ms for both attack and release in Classic mode
-    // to prevent block-boundary ratio step clicks and modulation buzz artifacts at very short attack settings.
-    float timeMs = isVoiced_ ? juce::jmax(attackMs, 15.0f) : 15.0f;
+    // Attack path: user controls the correction speed. Minimum 1 ms prevents
+    // per-sample discontinuities without adding audible portamento.
+    // Release path: fixed 15 ms prevents ratio step clicks on vowel offset.
+    // Vibrato blending: at vibratoAmount=0 the ratio tracks attackMs exactly
+    // (fully linear); at vibratoAmount=1 it blends toward 15 ms fast-tracking
+    // so the shifter can follow slow vibrato modulation without cycle jumps.
+    float minMs  = 1.0f;
     float fastMs = 15.0f;
-    float trackingMs = fastMs + (timeMs - fastMs) * vibratoAmount;
-    if (trackingMs < 15.0f) trackingMs = 15.0f;
+    float timeMs = isVoiced_ ? juce::jmax(attackMs, minMs)
+                             : fastMs;
+    float trackingMs = timeMs + (fastMs - timeMs) * vibratoAmount;
+    if (trackingMs < minMs) trackingMs = minMs;
     float timeS = trackingMs / 1000.0f;
     alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
     targetRatio = target;

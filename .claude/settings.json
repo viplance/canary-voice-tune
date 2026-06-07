@@ -53,7 +53,8 @@
       "Bash(grep -iE \"Installing.*vst3$|Built target CanaryVoiceTune_VST3|error|Error\")",
       "Bash(cmake ..)",
       "Bash(echo \"PY EXIT:$?\")",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(t\\) for t in d['tests']]\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(t\\) for t in d['tests']]\")",
+      "Bash(/Users/dzmitrysharko/Projects/CanaryVoiceTune/build/CanaryVoiceTune_Tests_artefacts/CanaryVoiceTune_Tests 9 test/audio/long_melody.wav)"
     ]
   }
 }
