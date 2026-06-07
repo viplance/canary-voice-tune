@@ -376,11 +376,11 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
                        + effectiveMidi * lockBypass;
 
   // Short portamento smooths the ±1 semitone step that occurs when bestMidi
-  // crosses a bucket boundary.  15 ms is fast enough to settle within a 40 ms
-  // analysis window (e.g. a 120 ms note with 80 ms onset-skip) while still
-  // being inaudible as a click on note transitions.
+  // crosses a bucket boundary. Time scales with attackMs so that at Attack=0
+  // the note switch is instantaneous (only cycle crossfades in the shifter
+  // mask the discontinuity). Minimum 1 ms prevents per-block step artefacts.
   float blockDtMs       = 1000.0f * blockSize / sr;
-  float portamentoTimeMs = 15.0f;
+  float portamentoTimeMs = juce::jmax(attackMs, 1.0f);
   float targetAlpha = 1.0f - std::exp(-blockDtMs / portamentoTimeMs);
   if (smoothedTargetMidi < 0.0f) smoothedTargetMidi = rawTargetMidi;
   else                            smoothedTargetMidi += targetAlpha
