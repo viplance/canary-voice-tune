@@ -99,7 +99,11 @@ private:
   // Naming convention:
   //   releaseMidi       — the note currently being held / tuned to.
   //   attackSamples     — samples elapsed since releaseMidi was set;
-  //                       used for the Attack fade-in.
+  //                       used for the note-switch stability check.
+  //   fadeSamples       — samples elapsed since the start of the phrase
+  //                       (resets only on true silence, not consonants);
+  //                       used for the Attack fade-in so consonants don't
+  //                       reset the correction level mid-phrase.
   //   noteHeldSamples   — total voiced samples on releaseMidi so far;
   //                       Release prevents switching before this reaches
   //                       releaseMs (gives inertia to the current note).
@@ -113,6 +117,7 @@ private:
   //                       the full Release tail.
   int releaseMidi = -1;
   int attackSamples = 0;
+  int fadeSamples = 0;     // fade-in counter — resets only on true silence, not on consonants
   int noteHeldSamples = 0;
   bool wasVoiced = false;
   float smoothedMidi = -1.0f;

@@ -228,6 +228,7 @@ void CanaryVoiceTuneAudioProcessor::buildMonoMix(
 void CanaryVoiceTuneAudioProcessor::resetVoicingState() {
   releaseMidi            = -1;
   attackSamples          = 0;
+  fadeSamples            = 0;   // true silence: fade-in starts from scratch
   noteHeldSamples        = 0;
   smoothedMidi           = -1.0f;
   smoothedTargetMidi     = -1.0f;
@@ -342,6 +343,7 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
   }
   if (releaseMidi >= 0) {
     attackSamples   += (int)blockSize;
+    fadeSamples     += (int)blockSize;
     noteHeldSamples += (int)blockSize;
 
     if (bestMidi != releaseMidi) {
@@ -371,8 +373,10 @@ int CanaryVoiceTuneAudioProcessor::chooseTargetNoteAndRatio(
 
   // ---- Attack fade-in -----------------------------------------------------
   // While attacking, blend toward dry so the Attack curve is audible.
+  // Use fadeSamples (resets only on true silence) so inter-note consonants
+  // don't restart the fade-in and leave the voice floating at dry pitch.
   float engageFade = juce::jlimit(0.0f, 1.0f,
-                                  1000.0f * (float)attackSamples / sr / attackMs);
+                                  1000.0f * (float)fadeSamples / sr / attackMs);
   float lockBypass = 1.0f - engageFade;
   // Incumbent stickiness is now handled symmetrically and spacing-aware inside
   // NoteSelector::chooseActiveNote (above), so the previous fixed "snap to the

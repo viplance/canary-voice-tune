@@ -19,6 +19,7 @@ struct TuneState {
     float smoothedTargetMidi = -1.0f;
     int   releaseMidi = -1;
     int   attackSamples = 0;
+    int   fadeSamples = 0;       // phrase-level counter; NOT reset on consonants
     int   noteHeldSamples = 0;
     int   candidateMidi = -1;
     int   candidateStableSamples = 0;
@@ -27,6 +28,7 @@ struct TuneState {
     void resetNoteLock() {
         // Mirrors PluginProcessor::resetNoteLockState — resets smoothedMidi so
         // the selector re-seeds from the new note's pitch, not the previous one.
+        // fadeSamples intentionally NOT reset here (phrase-level counter).
         releaseMidi = -1; attackSamples = 0; noteHeldSamples = 0;
         smoothedMidi = -1.0f; smoothedTargetMidi = -1.0f; voicedSampleCount = 0;
         candidateMidi = -1; candidateStableSamples = 0;
@@ -77,6 +79,7 @@ inline float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys
     }
     if (s.releaseMidi >= 0) {
         s.attackSamples   += (int)blockSize;
+        s.fadeSamples     += (int)blockSize;
         s.noteHeldSamples += (int)blockSize;
         if (bestMidi != s.releaseMidi) {
             if (s.noteHeldSamples >= releaseHoldSamples) {
@@ -91,7 +94,7 @@ inline float computeRatio(TuneState& s, float detectedHz, const bool* activeKeys
     }
 
     float engageFade = std::max(0.0f, std::min(1.0f,
-                          1000.0f * (float)s.attackSamples / sr / std::max(attackMs, 1.0f)));
+                          1000.0f * (float)s.fadeSamples / sr / std::max(attackMs, 1.0f)));
     float lockBypass = 1.0f - engageFade;
 
     int selectedMidi = (s.releaseMidi >= 0) ? s.releaseMidi : bestMidi;
