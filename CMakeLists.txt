@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 
+include(FetchContent)
+FetchContent_Declare(
+  rubberband
+  GIT_REPOSITORY https://github.com/breakfastquay/rubberband.git
+  GIT_TAG default
+)
+FetchContent_MakeAvailable(rubberband)
+
 file(READ "package.json" PACKAGE_JSON)
 string(JSON PKG_VERSION GET "${PACKAGE_JSON}" "version")
 
@@ -37,8 +45,22 @@ target_sources(CanaryVoiceTune PRIVATE
     Source/UI/RotaryKnob.h
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
+    Source/DSP/NoteSelector.cpp
+    Source/DSP/NoteSelector.h
+    Source/DSP/PitchShifterBase.h
+    Source/DSP/ModernPitchShifter.cpp
+    Source/DSP/ModernPitchShifter.h
+    Source/DSP/ClassicPitchShifter.cpp
+    Source/DSP/ClassicPitchShifter.h
     Source/DSP/PitchShifter.cpp
     Source/DSP/PitchShifter.h
+    Source/DSP/VocalEffectsProcessor.cpp
+    Source/DSP/VocalEffectsProcessor.h
+    ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
+)
+
+target_include_directories(CanaryVoiceTune PRIVATE
+    ${rubberband_SOURCE_DIR}
 )
 
 # Generate JuceHeader.h — this creates the auto-generated header and adds
@@ -66,6 +88,8 @@ target_link_libraries(CanaryVoiceTune PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
+    juce::juce_dsp
+    "-framework Accelerate"
 )
 
 set_target_properties(CanaryVoiceTune PROPERTIES
@@ -78,3 +102,93 @@ if (APPLE)
         OSX_ARCHITECTURES "arm64"
     )
 endif()
+
+if (MSVC)
+    target_compile_options(CanaryVoiceTune PRIVATE /W4)
+else()
+    target_compile_options(CanaryVoiceTune PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
+endif()
+
+# =============================================================================
+# Testing Target
+# =============================================================================
+juce_add_console_app(CanaryVoiceTune_Tests
+    PRODUCT_NAME "CanaryVoiceTune_Tests"
+)
+
+target_sources(CanaryVoiceTune_Tests PRIVATE
+    test/cpp/TestRunner.cpp
+    test/cpp/TestHelpers.h
+    test/cpp/TestHelpers.cpp
+    test/cpp/TuneRender.h
+    test/cpp/Test_BreathGate.h
+    test/cpp/Test_BreathGate.cpp
+    test/cpp/Test_Exciter.h
+    test/cpp/Test_Exciter.cpp
+    test/cpp/Test_NoteMapping.h
+    test/cpp/Test_NoteMapping.cpp
+    test/cpp/Test_ClassicClick.h
+    test/cpp/Test_ClassicClick.cpp
+    test/cpp/Test_OctaveJump.h
+    test/cpp/Test_OctaveJump.cpp
+    test/cpp/Test_HighlightOctave.h
+    test/cpp/Test_HighlightOctave.cpp
+    test/cpp/Test_NoteSelector.h
+    test/cpp/Test_NoteSelector.cpp
+    test/cpp/Test_LongMelody.h
+    test/cpp/Test_LongMelody.cpp
+    test/cpp/Test_19Notes.h
+    test/cpp/Test_19Notes.cpp
+    Source/DSP/PitchDetector.cpp
+    Source/DSP/PitchDetector.h
+    Source/DSP/NoteSelector.cpp
+    Source/DSP/NoteSelector.h
+    Source/DSP/PitchShifterBase.h
+    Source/DSP/ModernPitchShifter.cpp
+    Source/DSP/ModernPitchShifter.h
+    Source/DSP/ClassicPitchShifter.cpp
+    Source/DSP/ClassicPitchShifter.h
+    Source/DSP/PitchShifter.cpp
+    Source/DSP/PitchShifter.h
+    Source/DSP/VocalEffectsProcessor.cpp
+    Source/DSP/VocalEffectsProcessor.h
+    ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
+)
+
+target_include_directories(CanaryVoiceTune_Tests PRIVATE
+    Source
+    ${rubberband_SOURCE_DIR}
+)
+
+juce_generate_juce_header(CanaryVoiceTune_Tests)
+
+
+target_compile_definitions(CanaryVoiceTune_Tests PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
+
+target_link_libraries(CanaryVoiceTune_Tests PRIVATE
+    juce::juce_audio_formats
+    juce::juce_core
+    juce::juce_dsp
+    "-framework Accelerate"
+)
+
+set_target_properties(CanaryVoiceTune_Tests PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+if (APPLE)
+    set_target_properties(CanaryVoiceTune_Tests PROPERTIES
+        OSX_ARCHITECTURES "arm64"
+    )
+endif()
+
+if (MSVC)
+    target_compile_options(CanaryVoiceTune_Tests PRIVATE /W4)
+else()
+    target_compile_options(CanaryVoiceTune_Tests PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
+endif()
+

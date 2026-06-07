@@ -1,151 +1,103 @@
 #include "PitchShifter.h"
-#include <cmath>
 
-PitchShifter::PitchShifter() {}
+PitchShifter::PitchShifter()
+{
+    modernEngine = std::make_unique<ModernPitchShifter>();
+    classicEngine = std::make_unique<ClassicPitchShifter>();
+    activeEngine = modernEngine.get();
+}
+
 PitchShifter::~PitchShifter() {}
 
 void PitchShifter::prepare(double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused(samplesPerBlock);
-    currentSampleRate = sampleRate;
-    
-    // 25ms window to reduce latency and 'double voice'/chorus echo artifacts
-    windowSize = (int)(currentSampleRate * 0.025);
-    if (windowSize < 1) windowSize = 1;
-    
-    delayBuffer.clear();
-    delayBuffer.resize(windowSize * 4, 0.0f);
-    writePos = 0;
-    phase = 0.0f;
-    currentRatio = 1.0f;
-    smoothedRatio = 1.0f;
-    targetRatio = 1.0f;
-    alpha = 1.0f;
-    smoothedPeriod = (float)windowSize;
+    storedSampleRate = sampleRate;
+    storedSamplesPerBlock = samplesPerBlock;
+
+    modernEngine->prepare(sampleRate, samplesPerBlock);
+    classicEngine->prepare(sampleRate, samplesPerBlock);
+    vocalEffects.prepare(sampleRate, samplesPerBlock);
 }
 
-void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs, bool isVoiced, float detectedHz)
+void PitchShifter::reset()
 {
-    currentRatio = ratio;
-
-    float target = isVoiced ? currentRatio : 1.0f;
-    float timeMs = isVoiced ? attackMs : releaseMs;
-    if (timeMs < 1.0f) timeMs = 1.0f; // min 1ms
-
-    // lowpass alpha
-    float timeS = timeMs / 1000.0f;
-    alpha = 1.0f - std::exp(-1.0f / (timeS * currentSampleRate));
-
-    targetRatio = target;
-
-    // Pitch synchronous period matching
-    // We target a period size. For unvoiced, fallback to 25ms.
-    float targetPeriod = currentSampleRate * 0.025f;
-    if (isVoiced && detectedHz > 40.0f) {
-        targetPeriod = currentSampleRate / detectedHz;
-    }
-
-    // Update target period, but we'll smooth it per-sample in process() to avoid clicks
-    // We reuse windowSize variable as the "targetPeriod"
-    windowSize = (int)targetPeriod;
+    modernEngine->reset();
+    classicEngine->reset();
+    vocalEffects.reset();
 }
 
 void PitchShifter::process(juce::AudioBuffer<float>& buffer)
 {
-    auto* channelData = buffer.getWritePointer(0);
-    int numSamples = buffer.getNumSamples();
-    int bufSize = (int)delayBuffer.size();
-    if (bufSize == 0) return;
+    if (activeEngine != nullptr) {
+        vocalEffects.processPrePitch(buffer, activeEngine->getLatencySamples());
+        activeEngine->process(buffer);
+        vocalEffects.processPostPitch(buffer);
+    }
+}
 
-    // 4-point Catmull-Rom interpolation. Linear interpolation rolls off high
-    // frequencies whenever the fractional position is near 0.5 — audible as a
-    // dull/muffled output. Cubic preserves treble.
-    auto cubicInterp = [&](float pos) {
-        int i1 = (int)pos;
-        float frac = pos - (float)i1;
-        int i0 = (i1 - 1 + bufSize) % bufSize;
-        int i2 = (i1 + 1) % bufSize;
-        int i3 = (i1 + 2) % bufSize;
-        float y0 = delayBuffer[i0];
-        float y1 = delayBuffer[i1];
-        float y2 = delayBuffer[i2];
-        float y3 = delayBuffer[i3];
-        float a = -0.5f * y0 + 1.5f * y1 - 1.5f * y2 + 0.5f * y3;
-        float b = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
-        float c = -0.5f * y0 + 0.5f * y2;
-        float d = y1;
-        return ((a * frac + b) * frac + c) * frac + d;
-    };
+int PitchShifter::getLatencySamples() const
+{
+    if (activeEngine != nullptr) {
+        return activeEngine->getLatencySamples();
+    }
+    return 0;
+}
 
-    for (int i = 0; i < numSamples; ++i)
-    {
-        // Smooth ratio
-        smoothedRatio += alpha * (targetRatio - smoothedRatio);
+void PitchShifter::setTargetShift(float ratio, float attackMs, float releaseMs,
+                                  bool isVoiced, float detectedHz, float vibratoAmount)
+{
+    if (activeEngine != nullptr) {
+        activeEngine->setTargetShift(ratio, attackMs, releaseMs, isVoiced, detectedHz, vibratoAmount);
+    }
+}
 
-        // Smooth period (200ms time constant to avoid sudden delay jumps)
-        float periodAlpha = 1.0f - std::exp(-1.0f / (0.2f * currentSampleRate));
-        smoothedPeriod += periodAlpha * ((float)windowSize - smoothedPeriod);
+void PitchShifter::setToneShaping(float sibilantsDb, float breathDb)
+{
+    vocalEffects.setToneShaping(sibilantsDb, breathDb);
+}
 
-        // Write to buffer
-        float inSample = channelData[i];
-        delayBuffer[writePos] = inSample;
+void PitchShifter::setExciter(float exciterDb, bool isConsonant)
+{
+    vocalEffects.setExciter(exciterDb, isConsonant);
+}
 
-        // Window size is exactly 2.0 * period. Spacing is 1.0 * period.
-        // This completely eliminates comb-filtering (choir effect) on vocals.
-        float currentWindowSize = 2.0f * smoothedPeriod;
+void PitchShifter::setPopFilter(float thresholdDb)
+{
+    vocalEffects.setPopFilter(thresholdDb);
+}
 
-        // Read pointers
-        phase += (1.0f - smoothedRatio) / currentWindowSize;
-        if (phase >= 1.0f) phase -= 1.0f;
-        if (phase < 0.0f) phase += 1.0f;
+void PitchShifter::setBreathGate(float thresholdDb, bool isBreathDetected)
+{
+    vocalEffects.setBreathGate(thresholdDb, isBreathDetected);
+}
 
-        float phase2 = phase + 0.5f;
-        if (phase2 >= 1.0f) phase2 -= 1.0f;
+void PitchShifter::triggerOnsetFade(float fadeMs)
+{
+    if (activeEngine != nullptr) {
+        activeEngine->triggerOnsetFade(fadeMs);
+    }
+}
 
-        float readPos1 = (float)writePos - (phase * currentWindowSize);
-        if (readPos1 < 0) readPos1 += (float)bufSize;
-        float readPos2 = (float)writePos - (phase2 * currentWindowSize);
-        if (readPos2 < 0) readPos2 += (float)bufSize;
+float PitchShifter::getPopActivity() const
+{
+    return vocalEffects.getPopActivity();
+}
 
-        float val1 = cubicInterp(readPos1);
-        float val2 = cubicInterp(readPos2);
-        float win1 = std::sin(phase * juce::MathConstants<float>::pi);
-        float win2 = std::sin(phase2 * juce::MathConstants<float>::pi);
-        float norm = win1 + win2;
-        if (norm > 0.0001f) { win1 /= norm; win2 /= norm; }
-        float psolaSample = val1 * win1 + val2 * win2;
+float PitchShifter::getBreathActivity() const
+{
+    return vocalEffects.getBreathActivity();
+}
 
-        // Two cross-faded read pointers half a period apart inevitably produce
-        // a subtle chorus on transients (consonants, sibilants), regardless of
-        // window/normalization choice — it is fundamental to two-pointer PSOLA.
-        // To minimize the artifact, crossfade with the dry (delayed) signal
-        // proportionally to how little shift is actually needed. At ratio=1
-        // we hear pure dry; the further the ratio is from 1 the more PSOLA we
-        // mix in. Listeners can't tell the chorus apart from real shifting
-        // when the shift itself dominates.
-        //
-        // Curve: keep dry up to ~0.3 semitone shift (ratio ~1.0175), then
-        // ramp via a smoothstep so the audible "weight" of PSOLA grows softly
-        // and reaches full wet around ~1.7 semitones. Smoothstep avoids the
-        // linear-mix region where the dry signal still clearly partners the
-        // shifted one (which is exactly when chorus is most audible).
-        float drySample = delayBuffer[writePos];
-        float shiftAmount = std::abs(smoothedRatio - 1.0f);
-        const float dryEdge = 0.0175f; // ~0.3 semitone
-        const float wetEdge = 0.10f;   // ~1.7 semitone
-        float t = juce::jlimit(0.0f, 1.0f,
-                               (shiftAmount - dryEdge) / (wetEdge - dryEdge));
-        float wetMix = t * t * (3.0f - 2.0f * t); // smoothstep
-        float outSample = drySample * (1.0f - wetMix) + psolaSample * wetMix;
-
-        channelData[i] = outSample;
-
-        // If stereo, copy to right
-        if (buffer.getNumChannels() > 1) {
-            buffer.getWritePointer(1)[i] = outSample;
+void PitchShifter::setTuningMode(int modeIndex)
+{
+    if (currentMode != modeIndex) {
+        currentMode = modeIndex;
+        if (currentMode == 0) {
+            activeEngine = modernEngine.get();
+        } else {
+            activeEngine = classicEngine.get();
         }
-
-        writePos++;
-        if (writePos >= bufSize) writePos = 0;
+        // Real-time safe state reset instead of full reallocation
+        activeEngine->reset();
     }
 }
