@@ -85,37 +85,17 @@ void CanaryVoiceTuneAudioProcessor::setCurrentProgram(int index) {
       }
   };
 
+  // Presets only change the keyboard keys
   if (index == 0) {
-      // Default (Chromatic)
-      setParam("ATTACK", 100.0f);
-      setParam("RELEASE", 250.0f);
-      setParam("VIBRATO", 1.0f);
-      setParam("EXCITER", 0.0f);
-      setParam("SIBILANTS", 0.0f);
-      setParam("BREATH", 0.0f);
-      setParam("POP", 0.0f);
+      // Default (Chromatic) — all keys enabled
       for (int i = 0; i < 88; ++i)
           setParam("KEY_" + juce::String(i), 1.0f);
   } else if (index == 1) {
       // Disable all — bypass tuning entirely (no active target notes)
-      setParam("ATTACK", 100.0f);
-      setParam("RELEASE", 250.0f);
-      setParam("VIBRATO", 1.0f);
-      setParam("EXCITER", 0.0f);
-      setParam("SIBILANTS", 0.0f);
-      setParam("BREATH", 0.0f);
-      setParam("POP", 0.0f);
       for (int i = 0; i < 88; ++i)
           setParam("KEY_" + juce::String(i), 0.0f);
   } else {
       // Harmonic Presets (C Major, C Minor, etc.)
-      setParam("ATTACK", 20.0f);
-      setParam("RELEASE", 150.0f);
-      setParam("VIBRATO", 0.8f);
-      setParam("EXCITER", 0.75f);
-      setParam("SIBILANTS", 0.0f);
-      setParam("BREATH", -35.0f);
-      setParam("POP", -12.0f);
       for (int i = 0; i < 88; ++i) {
           bool enabled = isNoteEnabledForPreset(index, i + 21);
           setParam("KEY_" + juce::String(i), enabled ? 1.0f : 0.0f);
@@ -128,9 +108,9 @@ CanaryVoiceTuneAudioProcessor::createParameterLayout() {
   std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 150.0f, 100.0f));
+      juce::ParameterID{"ATTACK", 1}, "Attack", 0.1f, 150.0f, 0.1f));
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 500.0f, 250.0f));
+      juce::ParameterID{"RELEASE", 1}, "Release", 10.0f, 500.0f, 100.0f));
   // (Range control removed — note matching is always maximal.)
   // Vibrato: maximum pitch deviation (in semitones) allowed around the
   // smoothed centre. 0 = perfectly flat, 1 = up to ±1 semitone of wobble.
